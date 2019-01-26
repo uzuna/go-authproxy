@@ -22,6 +22,8 @@ func TestGetToken(t *testing.T) {
 	o := GetOauthConfig(c)
 	ctx := context.Background()
 	cli := o.Client(ctx, v)
+
+	// Check access
 	res, err := cli.Get("https://graph.microsoft.com/oidc/userinfo")
 	checkError(t, err)
 
