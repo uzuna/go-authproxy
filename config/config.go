@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 
 	"golang.org/x/oauth2"
@@ -37,7 +36,7 @@ func GetOauthConfig(config *Config) *oauth2.Config {
 		},
 		ClientID:     config.ClientID,
 		ClientSecret: config.ClientSecret,
-		RedirectURL:  fmt.Sprintf("http://%s", config.RedirectAddress),
+		RedirectURL:  config.RedirectAddress,
 	}
 	return oauthConfig
 }

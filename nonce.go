@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-func NewNonceStore() *NonceStore {
+func NewNonceStore(lifeTime time.Duration) *NonceStore {
 	return &NonceStore{
-		lock: new(sync.Mutex),
-		data: make(map[string]struct{}),
+		lock:     new(sync.Mutex),
+		data:     make(map[string]struct{}),
+		lifeTime: lifeTime,
 	}
 }
 

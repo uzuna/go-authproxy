@@ -2,6 +2,7 @@ package authproxy
 
 import (
 	"crypto/rand"
+	"encoding/gob"
 	"fmt"
 	"net/http"
 
@@ -16,8 +17,22 @@ import (
 const (
 	sesState      = "state"
 	sesAuthRefere = "auth_refere"
-	sesToken      = "jwttoken"
+	SesKeyToken   = "jwttoken"
 )
+
+type OpenIDToken struct {
+	IDToken  string
+	Audience string
+	Issuer   string
+	Subject  string
+	Email    string
+	Token    *oauth2.Token
+}
+
+func init() {
+	gob.Register(OpenIDToken{})
+	gob.Register(oauth2.Token{})
+}
 
 // Oauth Token Check
 // jwk check
@@ -61,7 +76,7 @@ func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
 			ac = AuthCodes{
 				IDToken: r.Form.Get("id_token"),
 				Code:    r.Form.Get("code"),
-				State:   r.Form.Get("string"),
+				State:   r.Form.Get("state"),
 			}
 		}
 		// id_token check
@@ -89,12 +104,18 @@ func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
 
 		// Request Access Token and save that
 		ctx := r.Context()
-		t, err := oc.Exchange(ctx, ac.Code)
+		ot, err := oc.Exchange(ctx, ac.Code)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		ses.Values[sesToken] = t
+		idt, err := ParseIDToken(ac.IDToken)
+		idt.Token = ot
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		ses.Values[SesKeyToken] = idt
 
 		adrs := "/"
 		if a, ok := ses.Values[sesAuthRefere].(string); ok {
@@ -114,12 +135,45 @@ func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
-// type OauthMiddlerware struct {
-// 	oc *oauth2.Config
-// 	ns *NonceStore
+func ParseIDToken(ts string) (*OpenIDToken, error) {
+	p := &jwt.Parser{}
+	m := jwt.MapClaims{}
+	_, _, err := p.ParseUnverified(ts, m)
+	if err != nil {
+		return nil, err
+	}
+	return &OpenIDToken{
+		IDToken:  ts,
+		Audience: m["aud"].(string),
+		Issuer:   m["iss"].(string),
+		Subject:  m["sub"].(string),
+		Email:    m["email"].(string),
+	}, nil
+}
+
+// func LoginRedirect() func(http.Handler) http.Handler {
+// 	return func(next http.Handler) http.Handler {
+// 		fn := func(w http.ResponseWriter, r *http.Request) {
+// 			ses := r.Context().Value(CtxSession).(*sessions.Session)
+
+// 			// AccessTokenが有効ならnext
+
+// 			// Refreshが有効期限内なら sessionをlockしてRefresh
+
+// 			// Token情報がないならLoginへRedirect
+// 			ses.Values[sesAuthRefere] = r.URL.String()
+// 			err := ses.Save(r, w)
+// 			if err != nil {
+// 				http.Error(w, err.Error(), http.StatusInternalServerError)
+// 				return
+// 			}
+// 			http.Redirect(w, r, "/login", 302)
+// 		}
+// 		return http.HandlerFunc(fn)
+// 	}
 // }
 
-func Redirect(oc *oauth2.Config, ns *NonceStore) http.Handler {
+func Login(oc *oauth2.Config, ns *NonceStore) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		// state生成
@@ -134,7 +188,7 @@ func Redirect(oc *oauth2.Config, ns *NonceStore) http.Handler {
 		// save to session
 		ses := r.Context().Value(CtxSession).(*sessions.Session)
 		ses.Values[sesState] = state
-		ses.Values[sesAuthRefere] = r.URL.String()
+
 		err = ses.Save(r, w)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
