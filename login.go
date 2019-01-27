@@ -5,6 +5,8 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/lestrrat-go/jwx/jwk"
@@ -26,6 +28,7 @@ type OpenIDToken struct {
 	Issuer   string
 	Subject  string
 	Email    string
+	Expire   time.Time
 	Token    *oauth2.Token
 }
 
@@ -34,7 +37,7 @@ func init() {
 	gob.Register(oauth2.Token{})
 }
 
-// Oauth Token Check
+// Authorize is Oauth Token Check
 // jwk check
 func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
 	jwtParser := func(token *jwt.Token) (interface{}, error) {
@@ -142,36 +145,20 @@ func ParseIDToken(ts string) (*OpenIDToken, error) {
 	if err != nil {
 		return nil, err
 	}
+	ut, err := strconv.ParseInt(m["exp"].(string), 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	exp := time.Unix(ut, 0)
 	return &OpenIDToken{
 		IDToken:  ts,
 		Audience: m["aud"].(string),
 		Issuer:   m["iss"].(string),
 		Subject:  m["sub"].(string),
+		Expire:   exp,
 		Email:    m["email"].(string),
 	}, nil
 }
-
-// func LoginRedirect() func(http.Handler) http.Handler {
-// 	return func(next http.Handler) http.Handler {
-// 		fn := func(w http.ResponseWriter, r *http.Request) {
-// 			ses := r.Context().Value(CtxSession).(*sessions.Session)
-
-// 			// AccessTokenが有効ならnext
-
-// 			// Refreshが有効期限内なら sessionをlockしてRefresh
-
-// 			// Token情報がないならLoginへRedirect
-// 			ses.Values[sesAuthRefere] = r.URL.String()
-// 			err := ses.Save(r, w)
-// 			if err != nil {
-// 				http.Error(w, err.Error(), http.StatusInternalServerError)
-// 				return
-// 			}
-// 			http.Redirect(w, r, "/login", 302)
-// 		}
-// 		return http.HandlerFunc(fn)
-// 	}
-// }
 
 func Login(oc *oauth2.Config, ns *NonceStore) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
