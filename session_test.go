@@ -1,10 +1,8 @@
 package authproxy_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +12,6 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/lestrrat-go/jwx/jwk"
 	"github.com/quasoft/memstore"
 	"github.com/skratchdot/open-golang/open"
 	"github.com/stretchr/testify/assert"
@@ -44,7 +41,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	set, err := ParseKeys(res.Body)
+	set, err := authproxy.ParseKeys(res.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -146,14 +143,4 @@ func TestAuthorizeFlow(t *testing.T) {
 		log.Print(err)
 	}
 
-}
-
-// parse json web key from io.Reader
-func ParseKeys(r io.Reader) (*jwk.Set, error) {
-	b := new(bytes.Buffer)
-	_, err := io.Copy(b, r)
-	if err != nil {
-		return nil, err
-	}
-	return jwk.Parse(b.Bytes())
 }

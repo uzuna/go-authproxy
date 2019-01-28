@@ -1,11 +1,12 @@
 package authproxy
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
@@ -145,11 +146,7 @@ func ParseIDToken(ts string) (*OpenIDToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	ut, err := strconv.ParseInt(m["exp"].(string), 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	exp := time.Unix(ut, 0)
+	exp := time.Unix(int64(m["exp"].(float64)), 0)
 	return &OpenIDToken{
 		IDToken:  ts,
 		Audience: m["aud"].(string),
@@ -194,4 +191,14 @@ func Login(oc *oauth2.Config, ns *NonceStore) http.Handler {
 		http.Redirect(w, r, adrs, 302)
 	}
 	return http.HandlerFunc(fn)
+}
+
+// parse json web key from io.Reader
+func ParseKeys(r io.Reader) (*jwk.Set, error) {
+	b := new(bytes.Buffer)
+	_, err := io.Copy(b, r)
+	if err != nil {
+		return nil, err
+	}
+	return jwk.Parse(b.Bytes())
 }

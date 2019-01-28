@@ -15,3 +15,7 @@ session idはstore側で生成するのが普通らしい
 2. Tokenの期限が近ければ更新を行う
 3. Tokenの期限切れの場合はRefreshを試行し、だめなら認証へ移動する
 2. Tokenがなければ認証へ移動する
+
+1. Token structを保持
+2. Expireを保持
+3. 
