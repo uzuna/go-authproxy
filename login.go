@@ -2,6 +2,7 @@ package authproxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/gob"
 	"fmt"
@@ -11,16 +12,15 @@ import (
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/lestrrat-go/jwx/jwk"
-	"github.com/pkg/errors"
 
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 )
 
 const (
-	sesState      = "state"
-	sesAuthRefere = "auth_refere"
-	SesKeyToken   = "jwttoken"
+	sesState        = "state"
+	SesLoginReferer = "login_referer"
+	SesKeyToken     = "jwttoken"
 )
 
 type OpenIDToken struct {
@@ -40,7 +40,7 @@ func init() {
 
 // Authorize is Oauth Token Check
 // jwk check
-func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
+func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) func(http.Handler) http.Handler {
 	jwtParser := func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); ok {
 			kid, ok := token.Header["kid"]
@@ -69,74 +69,111 @@ func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) http.Handler {
 		Code    string
 		State   string
 	}
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		var ac AuthCodes
-		// form_check
-		err := r.ParseForm()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		} else {
-			ac = AuthCodes{
-				IDToken: r.Form.Get("id_token"),
-				Code:    r.Form.Get("code"),
-				State:   r.Form.Get("state"),
+	return func(next http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			var ac AuthCodes
+			// form_check
+			err := r.ParseForm()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			} else {
+				ac = AuthCodes{
+					IDToken: r.Form.Get("id_token"),
+					Code:    r.Form.Get("code"),
+					State:   r.Form.Get("state"),
+				}
 			}
-		}
-		// id_token check
-		if len(ac.IDToken) < 1 {
-			err = errors.Errorf("Has not id_token")
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			// id_token check
+			if len(ac.IDToken) < 1 {
+				er := &ErrorRecord{
+					Code:    StatusInvalidBody,
+					Message: "Has not id_token",
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// get session data and check state
+			ses := r.Context().Value(CtxSession).(*sessions.Session)
+			if ac.State != ses.Values[sesState].(string) {
+				er := &ErrorRecord{
+					Code:    StatusInvalidBody,
+					Message: "Unmatch state",
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			delete(ses.Values, sesState)
+
+			// validate jwt
+			_, err = jwt.Parse(ac.IDToken, jwtParser)
+			if err != nil {
+				er := &ErrorRecord{
+					Code:    StatusInvalidBody,
+					Message: err.Error(),
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Request Access Token and save that
+			exctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+			ot, err := oc.Exchange(exctx, ac.Code)
+			if err != nil {
+				er := &ErrorRecord{
+					Code:    StatusFailGetToken,
+					Message: err.Error(),
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Check ID Token and save in session
+			idt, err := ParseIDToken(ac.IDToken)
+			idt.Token = ot
+			if err != nil {
+				er := &ErrorRecord{
+					Code:    StatusFailGetToken,
+					Message: err.Error(),
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			ses.Values[SesKeyToken] = idt
+
+			// save session state
+			err = ses.Save(r, w)
+			if err != nil {
+				er := &ErrorRecord{
+					Code:    StatusFailSession,
+					Message: err.Error(),
+				}
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, CtxErrorRecord, er)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			ctx := r.Context()
+			er := &ErrorRecord{Code: StatusLogIn}
+			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 
-		// get session data and check state
-		ses := r.Context().Value(CtxSession).(*sessions.Session)
-		if ac.State != ses.Values[sesState].(string) {
-			err = errors.Errorf("Invalid match state")
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		delete(ses.Values, sesState)
-
-		// validate jwt
-		_, err = jwt.Parse(ac.IDToken, jwtParser)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// Request Access Token and save that
-		ctx := r.Context()
-		ot, err := oc.Exchange(ctx, ac.Code)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		idt, err := ParseIDToken(ac.IDToken)
-		idt.Token = ot
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		ses.Values[SesKeyToken] = idt
-
-		adrs := "/"
-		if a, ok := ses.Values[sesAuthRefere].(string); ok {
-			adrs = a
-			delete(ses.Values, sesAuthRefere)
-		}
-
-		// save session state
-		err = ses.Save(r, w)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		http.Redirect(w, r, adrs, 302)
+		return http.HandlerFunc(fn)
 	}
-
-	return http.HandlerFunc(fn)
 }
 
 func ParseIDToken(ts string) (*OpenIDToken, error) {

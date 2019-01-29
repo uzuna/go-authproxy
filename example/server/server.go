@@ -43,48 +43,57 @@ func main() {
 		panic(err)
 	}
 
+	// CustomErrorPages
+	ep := authproxy.NewErrorPages()
+	rh := authproxy.RerouteRedirect(ep, "/")
+	rr := authproxy.Reroute(ep)
+	authMw := authproxy.Authorize(set, oc, ns)
+	authHandler := authMw(rh)
+
+	// mux
 	r := chi.NewRouter()
 	r.Use(authproxy.Session(store, "demo"))
-
-	r.Method("POST", "/", authproxy.Authorize(set, oc, ns))
+	r.Method("POST", "/", authHandler)
 	r.Method("GET", "/login", authproxy.Login(oc, ns))
 
 	a := &authproxy.ContextAccess{}
 
 	r.Group(func(r chi.Router) {
 		r.Use(authproxy.Refresh(oc))
+		r.Use(rr)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			ses, err := a.Session(r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusUnauthorized)
 				return
 			}
-			status, err := a.AuthStatus(r)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
-				return
-			}
-			switch status {
-			case authproxy.StatusUnAuthorized:
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				doc := `
-					<p>You are not authorized. <a href="/login">Prease Login</a></p>
-				`
-				w.Write([]byte(doc))
-			case authproxy.StatusAccessTokenExpired:
+			er, err := a.ErrorRecord(r)
 
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				doc := `
-					<p>Your Access Token Expired.</p>
-				`
-				w.Write([]byte(doc))
-			case authproxy.StatusRefreshTokenExpired:
+			// if err != nil {
+			// 	http.Error(w, err.Error(), http.StatusUnauthorized)
+			// 	return
+			// }
+			switch er.Code {
+			// case authproxy.StatusUnAuthorized:
+			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// 	doc := `
+			// 		<p>You are not authorized. <a href="/login">Prease Login</a></p>
+			// 	`
+			// 	w.Write([]byte(doc))
+			// case authproxy.StatusAccessTokenExpired:
 
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				doc := `
-					<p>Your Refresh Token Expired. <a href="/login">Prease ReLogin</a></p>
-				`
-				w.Write([]byte(doc))
+			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// 	doc := `
+			// 		<p>Your Access Token Expired.</p>
+			// 	`
+			// 	w.Write([]byte(doc))
+			// case authproxy.StatusRefreshTokenExpired:
+
+			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// 	doc := `
+			// 		<p>Your Refresh Token Expired. <a href="/login">Prease ReLogin</a></p>
+			// 	`
+			// 	w.Write([]byte(doc))
 			case authproxy.StatusLoggedIn, authproxy.StatusAccessTokenUpdated:
 				sa := &authproxy.SessionAccess{}
 				token, err := sa.Token(ses)
@@ -96,6 +105,8 @@ func main() {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				doc := fmt.Sprintf(`<p>You are %s</p>`, token.Email)
 				w.Write([]byte(doc))
+			default:
+				w.Write([]byte("Not Login"))
 			}
 
 		})

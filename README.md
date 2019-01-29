@@ -18,4 +18,20 @@ session idはstore側で生成するのが普通らしい
 
 1. Token structを保持
 2. Expireを保持
-3. 
+
+
+##### Redirect
+
+1. 任意のアドレスにアクセス
+2. ログインしていなかったのでLoginフローへ移動
+3. 元のアドレスを開く
+    - SPA + Hashの場合はSPAにhashの保持が必要
+    - Addressの保持が必要
+    - POST / からRedirect?
+    - 任意のアドレスをリストで表示するにとどめるほうが良い? -> Continue
+
+* 認証失敗時はRedirectしない
+    - 
+
+post -> authcheck -> reroute
+route -> refresh -> reroute

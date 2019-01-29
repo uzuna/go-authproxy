@@ -44,17 +44,10 @@ func (a *ContextAccess) Session(r *http.Request) (*sessions.Session, error) {
 	return ses, nil
 }
 
-func (a *ContextAccess) AuthStatus(r *http.Request) (int, error) {
-	state, ok := r.Context().Value(CtxAuthStatus).(int)
+func (a *ContextAccess) ErrorRecord(r *http.Request) (*ErrorRecord, error) {
+	detail, ok := r.Context().Value(CtxErrorRecord).(*ErrorRecord)
 	if !ok {
-		return 0, errors.Errorf("Has not Auth Status")
-	}
-	return state, nil
-}
-func (a *ContextAccess) AuthDetail(r *http.Request) (string, error) {
-	detail, ok := r.Context().Value(CtxAuthDetail).(string)
-	if !ok {
-		return "", errors.Errorf("Has not Auth Detail")
+		return nil, errors.Errorf("Has not ErrorRecord")
 	}
 	return detail, nil
 }
@@ -62,9 +55,17 @@ func (a *ContextAccess) AuthDetail(r *http.Request) (string, error) {
 type SessionAccess struct{}
 
 func (a *SessionAccess) Token(ses *sessions.Session) (*OpenIDToken, error) {
-	idtokens, ok := ses.Values[SesKeyToken].(OpenIDToken)
+	idtokens, ok := ses.Values[SesKeyToken].(*OpenIDToken)
 	if !ok {
 		return nil, errors.Errorf("Has not Auth Status")
 	}
-	return &idtokens, nil
+	return idtokens, nil
 }
+
+// func (a *SessionAccess) LoginReferer(ses *sessions.Session) (*OpenIDToken, error) {
+// 	idtokens, ok := ses.Values[SesLoginReferer].(OpenIDToken)
+// 	if !ok {
+// 		return nil, errors.Errorf("Has not Auth Status")
+// 	}
+// 	return &idtokens, nil
+// }
