@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/lestrrat-go/jwx/jwk"
+	"github.com/pkg/errors"
 
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
@@ -33,6 +35,48 @@ type OpenIDToken struct {
 	Token    *oauth2.Token
 }
 
+type IDTokenAuthorize struct {
+	Issuer   []string `json:"iss"`
+	Audience []string `json:"aud"`
+}
+
+func (a *IDTokenAuthorize) Match(token *jwt.Token) error {
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return errors.Errorf("Fail parse claims. has [%s]", reflect.TypeOf(token.Claims))
+	}
+
+	if len(a.Issuer) > 0 {
+		iss, ok := claims["iss"].(string)
+		if !ok {
+			return errors.Errorf("Token has not issuer")
+		}
+		has := a.has(iss, a.Issuer)
+		if !has {
+			return errors.Errorf("UnAuthorized issuer")
+		}
+	}
+	if len(a.Audience) > 0 {
+		aud, ok := claims["aud"].(string)
+		if !ok {
+			return errors.Errorf("Token has not audience")
+		}
+		has := a.has(aud, a.Audience)
+		if !has {
+			return errors.Errorf("UnAuthorized audience")
+		}
+	}
+	return nil
+}
+func (a *IDTokenAuthorize) has(target string, list []string) bool {
+	for _, v := range list {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	gob.Register(OpenIDToken{})
 	gob.Register(oauth2.Token{})
@@ -40,7 +84,7 @@ func init() {
 
 // Authorize is Oauth Token Check
 // jwk check
-func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) func(http.Handler) http.Handler {
+func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore, az *IDTokenAuthorize) func(http.Handler) http.Handler {
 	jwtParser := func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); ok {
 			kid, ok := token.Header["kid"]
@@ -55,6 +99,13 @@ func Authorize(set *jwk.Set, oc *oauth2.Config, ns *NonceStore) func(http.Handle
 			if !ok {
 				return nil, fmt.Errorf("Invalid nonce")
 			}
+
+			// Audience Issuer
+			err := az.Match(token)
+			if err != nil {
+				return nil, err
+			}
+
 			key := set.LookupKeyID(kid.(string))
 			if len(key) < 1 {
 				return nil, fmt.Errorf("Unknown kid: %s", kid)

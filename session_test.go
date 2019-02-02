@@ -37,6 +37,11 @@ func TestMain(m *testing.M) {
 	oc := config.GetOauthConfig(c)
 	ns := authproxy.NewNonceStore(time.Minute)
 
+	az := &authproxy.IDTokenAuthorize{
+		Issuer:   strings.Split(os.Getenv("OAUTH_ISSUER"), ","),
+		Audience: strings.Split(os.Getenv("OAUTH_AUDIENCE"), ","),
+	}
+
 	res, err := http.Get(os.Getenv("OAUTH_KEYS_URL"))
 	if err != nil {
 		panic(err)
@@ -52,7 +57,9 @@ func TestMain(m *testing.M) {
 	r.Use(authproxy.Session(store, "demo"))
 
 	//
-	r.Method("POST", "/", authproxy.Authorize(set, oc, ns))
+	ep := authproxy.NewErrorPages()
+	rh := authproxy.RerouteRedirect(ep, "/")
+	r.Method("POST", "/", authproxy.Authorize(set, oc, ns, az)(rh))
 	r.MethodFunc("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
 		v := r.Context().Value(authproxy.CtxSession).(*sessions.Session)
 		// log.Printf("%#v", v.Values["jwttoken"])
@@ -109,7 +116,7 @@ func TestSession(t *testing.T) {
 }
 
 func TestAuthorizeFlow(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	addr := os.Getenv("HTTP_ADDR")
 	wait := make(chan struct{})
 	// route.MethodFunc("GET", "/close", func(w http.ResponseWriter, r *http.Request) {
