@@ -37,11 +37,7 @@ func TestMain(m *testing.M) {
 	oc := config.GetOauthConfig(c)
 	ns := authproxy.NewNonceStore(time.Minute)
 
-	az := &authproxy.IDTokenAuthorize{
-		Issuer:   strings.Split(os.Getenv("OAUTH_ISSUER"), ","),
-		Audience: strings.Split(os.Getenv("OAUTH_AUDIENCE"), ","),
-	}
-
+	//jws
 	res, err := http.Get(os.Getenv("OAUTH_KEYS_URL"))
 	if err != nil {
 		panic(err)
@@ -50,6 +46,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	az := authproxy.NewIDTokenValidator(
+		set,
+		strings.Split(os.Getenv("OAUTH_ISSUER"), ","),
+		strings.Split(os.Getenv("OAUTH_AUDIENCE"), ","),
+	)
 
 	r := chi.NewRouter()
 
@@ -57,27 +58,31 @@ func TestMain(m *testing.M) {
 	r.Use(authproxy.Session(store, "demo"))
 
 	//
+	ca := &authproxy.ContextAccess{}
+	sa := &authproxy.SessionAccess{}
 	ep := authproxy.NewErrorPages()
 	rh := authproxy.RerouteRedirect(ep, "/")
-	r.Method("POST", "/", authproxy.Authorize(set, oc, ns, az)(rh))
+	r.Method("POST", "/", authproxy.Validate(oc, az.JWTParser(ns))(rh))
 	r.MethodFunc("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
-		v := r.Context().Value(authproxy.CtxSession).(*sessions.Session)
-		// log.Printf("%#v", v.Values["jwttoken"])
-
-		if token, ok := v.Values[authproxy.SesKeyToken].(authproxy.OpenIDToken); ok {
-			vt := &token
-			log.Println(vt)
-			log.Println(vt.Token.Expiry)
-			w.Write([]byte(vt.Email))
+		ses, err := ca.Session(r)
+		if err != nil {
+			w.Write([]byte(err.Error()))
 			return
 		}
-		w.Write([]byte("You are not logined"))
+		uinfo, err := sa.UserInfo(ses)
+		if err == nil {
+			log.Println(uinfo.Expire)
+			w.Write([]byte(uinfo.Email))
+			return
+		}
+		w.Write([]byte(fmt.Sprintf("You are not logined %s", err.Error())))
 		return
 	})
 	r.Method("GET", "/login", authproxy.Login(oc, ns))
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		// v := r.Context().Value(authproxy.CtxSession).(*sessions.Session)
-		w.Write([]byte("Accept"))
+		w.Header().Set("Content-Type", "text/html; charset=utf8")
+		w.Write([]byte(`Accept: <a href="/user"> User Page </a>`))
 	})
 	route = r
 

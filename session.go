@@ -2,21 +2,44 @@ package authproxy
 
 import (
 	"context"
+	"encoding/gob"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/sessions"
 	"github.com/pkg/errors"
+	"golang.org/x/oauth2"
+)
+
+const (
+	sesState        = "state"
+	SesLoginReferer = "login_referer"
+	sesUserInfo     = "userinfo"
 )
 
 var (
-	CtxSession     = &ContextKey{"Session"}
-	CtxAccessToken = &ContextKey{"AccessToken"}
+	CtxSession     = &ContextKey{"Session"}      // Identity key of Session in Context
+	CtxErrorRecord = &ContextKey{"error_record"} //
+	CtxHTTPStatus  = &ContextKey{"http_status_code"}
 )
 
 type ContextKey struct {
 	Name string
 }
 
+// Sessinoとユーザーを結び付ける情報
+type UserSessionInfo struct {
+	Token  *oauth2.Token
+	Expire time.Time
+	Email  string
+}
+
+func init() {
+	gob.Register(UserSessionInfo{})
+	gob.Register(oauth2.Token{})
+}
+
+// Session is generate http middlerware handler for session generate and assing to context
 func Session(store sessions.Store, sessionName string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +57,7 @@ func Session(store sessions.Store, sessionName string) func(next http.Handler) h
 	}
 }
 
+// ContextAccess is wrapper for access Context data
 type ContextAccess struct{}
 
 func (a *ContextAccess) Session(r *http.Request) (*sessions.Session, error) {
@@ -54,12 +78,12 @@ func (a *ContextAccess) ErrorRecord(r *http.Request) (*ErrorRecord, error) {
 
 type SessionAccess struct{}
 
-func (a *SessionAccess) Token(ses *sessions.Session) (*OpenIDToken, error) {
-	idtokens, ok := ses.Values[SesKeyToken].(*OpenIDToken)
+func (a *SessionAccess) UserInfo(ses *sessions.Session) (*UserSessionInfo, error) {
+	uinfo, ok := ses.Values[sesUserInfo].(UserSessionInfo)
 	if !ok {
 		return nil, errors.Errorf("Has not Auth Status")
 	}
-	return idtokens, nil
+	return &uinfo, nil
 }
 
 // func (a *SessionAccess) LoginReferer(ses *sessions.Session) (*OpenIDToken, error) {

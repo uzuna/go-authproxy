@@ -21,15 +21,17 @@ const (
 	StatusRefreshTokenExpired        // RefreshToken期限切れ
 )
 
-var (
-	CtxErrorRecord = &ContextKey{"error_record"}
-	CtxHTTPStatus  = &ContextKey{"http_status_code"}
-)
-
 // Refresh is chekc roken expire and refresh access token
 func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 	cac := &ContextAccess{}
+	sa := &SessionAccess{}
 	return func(next http.Handler) http.Handler {
+
+		errorBind := func(w http.ResponseWriter, r *http.Request, er *ErrorRecord) {
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		}
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			// Sessionを取得
 			ses, err := cac.Session(r)
@@ -38,55 +40,47 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 					Code:    StatusUnAuthorized,
 					Message: "Not found session in context",
 				}
-				ctx := r.Context()
-				ctx = context.WithValue(ctx, CtxErrorRecord, er)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				errorBind(w, r, er)
 				return
 			}
 
-			// Tokenを確認
-			idtokens, ok := ses.Values[SesKeyToken].(OpenIDToken)
-			if !ok {
+			// UserInfo check
+			uinfo, err := sa.UserInfo(ses)
+			if err != nil {
 				er := &ErrorRecord{
 					Code:    StatusUnAuthorized,
-					Message: "Not found id_token in session",
+					Message: "Not found userinfo in session",
 				}
-				ctx := r.Context()
-				ctx = context.WithValue(ctx, CtxErrorRecord, er)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				errorBind(w, r, er)
 				return
 			}
+
 			// AccessTokenが有効ならnext
-			token := &idtokens
-			timeout := time.Now().Sub(token.Expire)
+			timeout := time.Now().Sub(uinfo.Expire)
 			if timeout > 0 {
 				er := &ErrorRecord{Code: StatusLoggedIn}
-				ctx := r.Context()
-				ctx = context.WithValue(ctx, CtxErrorRecord, er)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				errorBind(w, r, er)
 				return
 			}
 
 			// Refreshが有効期限内なら 更新する
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 			defer cancel()
-			ts := oc.TokenSource(ctx, idtokens.Token)
+			ts := oc.TokenSource(ctx, uinfo.Token)
 			tnew, err := ts.Token()
 			if err != nil {
 				er := &ErrorRecord{
 					Code:    StatusRefreshTokenExpired,
 					Message: err.Error(),
 				}
-				ctx := r.Context()
-				ctx = context.WithValue(ctx, CtxErrorRecord, er)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				errorBind(w, r, er)
 				return
 			}
 			// 更新出来たらSessionStoreを更新
 			// @todo session idの更新はいつ行うか
-			token.Expire = tnew.Expiry
-			token.Token = tnew
-			ses.Values[SesKeyToken] = token
+			uinfo.Expire = tnew.Expiry
+			uinfo.Token = tnew
+			ses.Values[sesUserInfo] = uinfo
 			err = ses.Save(r, w)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

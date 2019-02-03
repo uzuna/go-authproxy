@@ -35,3 +35,22 @@ session idはstore側で生成するのが普通らしい
 
 post -> authcheck -> reroute
 route -> refresh -> reroute
+
+Authorize時の検証
+
+- issuer
+- Audience
+- ACL組み込み?
+
+- OauthConfig
+    - 認証アドレス生成とRefresh
+    - session -> state
+- Authenticate
+    - 認証okenの検証
+
+- Routing
+    - 認証状態からエラーメッセいーじを生成
+    - session -> path
+- ErrorPages
+    - 表示のカスタマイズ
+
