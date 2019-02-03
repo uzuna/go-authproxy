@@ -18,11 +18,11 @@
         margin-top: -100px;
         }
         .column {
-        max-width: 450px;
+        max-width: 600px;
         }
         .masthead h1.ui.header {
-        font-size: 7em;
-        font-weight: normal;
+            font-size: 7em;
+            font-weight: normal;
         }
         .masthead h2 {
         font-size: 3em;

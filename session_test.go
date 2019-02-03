@@ -3,6 +3,7 @@ package authproxy_test
 import (
 	"context"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -68,12 +69,12 @@ func TestMain(m *testing.M) {
 	ep, _ := authproxy.NewErrorPages()
 	rh := authproxy.RerouteRedirect(ep, "/")
 	r.Method("GET", "/login", h.LoginRedirect())
-	r.MethodFunc("GET", "/404", func(w http.ResponseWriter, r *http.Request) {
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, authproxy.CtxHTTPStatus, http.StatusNotFound)
 		ctx = context.WithValue(ctx, authproxy.CtxErrorRecord, &authproxy.ErrorRecord{
 			Code:    http.StatusNotFound,
-			Message: "You are accessed to \"not found.\"",
+			Message: fmt.Sprintf("Sorry, [%s] is not provided.</br>Please back to top page or contact to us.", html.EscapeString(r.URL.Path)),
 		})
 		ep.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -138,7 +139,7 @@ func TestSession(t *testing.T) {
 }
 
 func TestAuthorizeFlow(t *testing.T) {
-	// t.SkipNow()
+	t.SkipNow()
 	addr := os.Getenv("HTTP_ADDR")
 	wait := make(chan struct{})
 	// route.MethodFunc("GET", "/close", func(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +159,7 @@ func TestAuthorizeFlow(t *testing.T) {
 	<-listenWait
 
 	err := open.Start(fmt.Sprintf("http://%s/login", addr))
+	// err := open.Start(fmt.Sprintf("http://%s/404", addr))
 	if err != nil {
 		t.Logf("%#v", err)
 		t.Fail()
