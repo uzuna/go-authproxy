@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/sessions"
@@ -11,6 +12,31 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 )
+
+func NewAuthenticateHandlers(
+	oc *oauth2.Config,
+	val *IDTokenValidator,
+	store sessions.Store,
+	opts ...HandlersOption,
+) (AuthenticateHandlers, error) {
+	timeout := time.Minute
+	a := &openidAuthenticateHandlers{
+		oauth2conf:    oc,
+		authVaridator: val,
+		store:         store,
+		sessionName:   "authproxy",
+		errorPages:    &ErrorPages{},
+		nonceStore:    NewNonceStore(timeout),
+	}
+
+	for _, v := range opts {
+		err := v(a)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return a, nil
+}
 
 type AuthenticateHandlers interface {
 	Session() func(http.Handler) http.Handler
@@ -117,7 +143,7 @@ type openidAuthenticateHandlers struct {
 	errorPages    *ErrorPages
 }
 
-func (h *openidAuthenticateHandlers) Sesstion() func(http.Handler) http.Handler {
+func (h *openidAuthenticateHandlers) Session() func(http.Handler) http.Handler {
 	return Session(h.store, h.sessionName)
 }
 

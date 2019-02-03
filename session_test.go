@@ -27,6 +27,7 @@ var store sessions.Store
 var route chi.Router
 
 func TestMain(m *testing.M) {
+
 	store := memstore.NewMemStore(
 		[]byte("authkey123"),
 		[]byte("enckey12341234567890123456789012"),
@@ -35,7 +36,6 @@ func TestMain(m *testing.M) {
 	godotenv.Load()
 	c := config.LoadConfig()
 	oc := config.GetOauthConfig(c)
-	ns := authproxy.NewNonceStore(time.Minute)
 
 	//jws
 	res, err := http.Get(os.Getenv("OAUTH_KEYS_URL"))
@@ -52,17 +52,23 @@ func TestMain(m *testing.M) {
 		strings.Split(os.Getenv("OAUTH_AUDIENCE"), ","),
 	)
 
+	h, err := authproxy.NewAuthenticateHandlers(oc, az, store)
+	if err != nil {
+		panic(err)
+	}
+
 	r := chi.NewRouter()
 
 	// Enabled session
-	r.Use(authproxy.Session(store, "demo"))
+	r.Use(h.Session())
 
 	//
 	ca := &authproxy.ContextAccess{}
 	sa := &authproxy.SessionAccess{}
 	ep := authproxy.NewErrorPages()
 	rh := authproxy.RerouteRedirect(ep, "/")
-	r.Method("POST", "/", authproxy.Validate(oc, az.JWTParser(ns))(rh))
+	r.Method("GET", "/login", h.LoginRedirect())
+	r.Method("POST", "/", h.ValidateCredential()(rh))
 	r.MethodFunc("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
 		ses, err := ca.Session(r)
 		if err != nil {
@@ -78,7 +84,6 @@ func TestMain(m *testing.M) {
 		w.Write([]byte(fmt.Sprintf("You are not logined %s", err.Error())))
 		return
 	})
-	r.Method("GET", "/login", authproxy.Login(oc, ns))
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		// v := r.Context().Value(authproxy.CtxSession).(*sessions.Session)
 		w.Header().Set("Content-Type", "text/html; charset=utf8")
