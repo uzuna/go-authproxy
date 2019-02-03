@@ -1,6 +1,13 @@
 package authproxy
 
-import "net/http"
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"text/template"
+
+	"github.com/uzuna/go-authproxy/bindata"
+)
 
 // ErrorHandleFunc is implementation of ErrorPage Renderer
 type ErrorHandleFunc func(w http.ResponseWriter, r *http.Request, e *ErrorRecord)
@@ -12,10 +19,27 @@ type ErrorRecord struct {
 }
 
 // NewErrorPages create instance of ErrorPages
-func NewErrorPages() *ErrorPages {
-	return &ErrorPages{
+func NewErrorPages() (*ErrorPages, error) {
+	erp := &ErrorPages{
 		Map: make(map[int]ErrorHandleFunc),
 	}
+	f, err := bindata.Assets.Open("/assets/html/error.html.tpl")
+	if err != nil {
+		return erp, err
+	}
+	defer f.Close()
+	b := new(bytes.Buffer)
+	io.Copy(b, f)
+	tpl, err := template.New("error.html.tpl").Parse(b.String())
+	if err != nil {
+		return erp, err
+	}
+	erp.ErrorHandleFunc(http.StatusNotFound, func(w http.ResponseWriter, r *http.Request, er *ErrorRecord) {
+		w.Header().Set("Content-Type", "text/html")
+		tpl.Execute(w, er)
+	})
+
+	return erp, nil
 }
 
 // ErrorPages is serve Custom Error page
@@ -42,6 +66,13 @@ func (e *ErrorPages) Error(w http.ResponseWriter, r *http.Request, err string, c
 func (e *ErrorPages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	code, ok := r.Context().Value(CtxHTTPStatus).(int)
 	if !ok {
+		if f, ok := e.Map[http.StatusNotFound]; ok {
+			f(w, r, &ErrorRecord{
+				Code:    http.StatusNotFound,
+				Message: "Not found",
+			})
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("Not found"))
 	}
@@ -53,6 +84,13 @@ func (e *ErrorPages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(code)
 		w.Write([]byte(er.Message))
+		return
+	}
+	if f, ok := e.Map[http.StatusNotFound]; ok {
+		f(w, r, &ErrorRecord{
+			Code:    http.StatusNotFound,
+			Message: "Not found",
+		})
 		return
 	}
 	w.WriteHeader(http.StatusNotFound)

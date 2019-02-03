@@ -65,9 +65,18 @@ func TestMain(m *testing.M) {
 	//
 	ca := &authproxy.ContextAccess{}
 	sa := &authproxy.SessionAccess{}
-	ep := authproxy.NewErrorPages()
+	ep, _ := authproxy.NewErrorPages()
 	rh := authproxy.RerouteRedirect(ep, "/")
 	r.Method("GET", "/login", h.LoginRedirect())
+	r.MethodFunc("GET", "/404", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, authproxy.CtxHTTPStatus, http.StatusNotFound)
+		ctx = context.WithValue(ctx, authproxy.CtxErrorRecord, &authproxy.ErrorRecord{
+			Code:    http.StatusNotFound,
+			Message: "You are accessed to \"not found.\"",
+		})
+		ep.ServeHTTP(w, r.WithContext(ctx))
+	})
 	r.Method("POST", "/", h.ValidateCredential()(rh))
 	r.MethodFunc("GET", "/user", func(w http.ResponseWriter, r *http.Request) {
 		ses, err := ca.Session(r)
@@ -78,7 +87,9 @@ func TestMain(m *testing.M) {
 		uinfo, err := sa.UserInfo(ses)
 		if err == nil {
 			log.Println(uinfo.Expire)
+			w.Header().Set("Content-Type", "text/html; charset=utf8")
 			w.Write([]byte(uinfo.Email))
+			w.Write([]byte(`DummyLink: <a href="/404"> 404 Page </a>`))
 			return
 		}
 		w.Write([]byte(fmt.Sprintf("You are not logined %s", err.Error())))
@@ -88,6 +99,7 @@ func TestMain(m *testing.M) {
 		// v := r.Context().Value(authproxy.CtxSession).(*sessions.Session)
 		w.Header().Set("Content-Type", "text/html; charset=utf8")
 		w.Write([]byte(`Accept: <a href="/user"> User Page </a>`))
+		w.Write([]byte(`DummyLink: <a href="/404"> 404 Page </a>`))
 	})
 	route = r
 
