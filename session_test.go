@@ -73,8 +73,8 @@ func TestMain(m *testing.M) {
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, authproxy.CtxHTTPStatus, http.StatusNotFound)
 		ctx = context.WithValue(ctx, authproxy.CtxErrorRecord, &authproxy.ErrorRecord{
-			Code:    http.StatusNotFound,
-			Message: fmt.Sprintf("Sorry, [%s] is not provided.</br>Please back to top page or contact to us.", html.EscapeString(r.URL.Path)),
+			StatusCode: http.StatusNotFound,
+			Message:    fmt.Sprintf("Sorry, [%s] is not provided.</br>Please back to top page or contact to us.", html.EscapeString(r.URL.Path)),
 		})
 		ep.ServeHTTP(w, r.WithContext(ctx))
 	})

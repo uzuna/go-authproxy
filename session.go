@@ -19,6 +19,7 @@ const (
 
 var (
 	CtxSession     = &ContextKey{"Session"}      // Identity key of Session in Context
+	CtxAuthResult  = &ContextKey{"auth_result"}  //
 	CtxErrorRecord = &ContextKey{"error_record"} //
 	CtxHTTPStatus  = &ContextKey{"http_status_code"}
 )
@@ -66,6 +67,14 @@ func (a *ContextAccess) Session(r *http.Request) (*sessions.Session, error) {
 		return nil, errors.Errorf("Has not session in context")
 	}
 	return ses, nil
+}
+
+func (a *ContextAccess) authResult(r *http.Request) (*authResult, error) {
+	result, ok := r.Context().Value(CtxAuthResult).(*authResult)
+	if !ok {
+		return nil, errors.Errorf("Has not ErrorRecord")
+	}
+	return result, nil
 }
 
 func (a *ContextAccess) ErrorRecord(r *http.Request) (*ErrorRecord, error) {

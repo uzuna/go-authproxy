@@ -5,7 +5,7 @@
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 
-	<title>{{.Code}}:{{.Message}}</title>
+	<title>{{.StatusCode}}:{{.Message}}</title>
     <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css"></link>
     <style type="text/css">
         body {
@@ -34,7 +34,7 @@
 <body>
     <div class="ui middle aligned center aligned grid masthead">
         <div class="column">
-            <h1 class="ui header">{{.Code}}</h1>
+            <h1 class="ui header">{{.StatusCode}}</h1>
             <h2  class="ui header">{{.Message}}</h2>
             <p>
                 <a class="ui labeled icon button blue" href="/">

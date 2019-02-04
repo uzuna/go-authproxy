@@ -9,17 +9,22 @@ import (
 )
 
 const (
-	StatusUnAuthorized        = iota // 認証情報なし
-	StatusUndefinedRoute             // 内部ルーティングのミス
-	StatusInvalidBody                // Authorize body is invalid
-	StatusFailGetToken               // Can not get token by code
-	StatusFailSession                // Session fail
-	StatusLoggedIn                   // Loggedin and active Access Token
-	StatusLogIn                      // 初回Login
-	StatusAccessTokenUpdated         // Loggedin and active Access Token
-	StatusAccessTokenExpired         // AccessToken期限切れ
-	StatusRefreshTokenExpired        // RefreshToken期限切れ
+	errUnAuthorized        = iota // 認証情報なし
+	errUndefinedRoute             // 内部ルーティングのミス
+	errInvalidBody                // Authorize body is invalid
+	errFailGetToken               // Can not get token by code
+	errFailSession                // Session fail
+	errLoggedIn                   // Loggedin and active Access Token
+	errLogIn                      // 初回Login
+	errAccessTokenUpdated         // Loggedin and active Access Token
+	errAccessTokenExpired         // AccessToken期限切れ
+	errRefreshTokenExpired        // RefreshToken期限切れ
 )
+
+type authResult struct {
+	ErrCode int
+	Message string
+}
 
 // Refresh is chekc roken expire and refresh access token
 func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
@@ -27,17 +32,17 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 	sa := &SessionAccess{}
 	return func(next http.Handler) http.Handler {
 
-		errorBind := func(w http.ResponseWriter, r *http.Request, er *ErrorRecord) {
+		errorBind := func(w http.ResponseWriter, r *http.Request, er *authResult) {
 			ctx := r.Context()
-			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			ctx = context.WithValue(ctx, CtxAuthResult, er)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			// Sessionを取得
 			ses, err := cac.Session(r)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusUnAuthorized,
+				er := &authResult{
+					ErrCode: errFailSession,
 					Message: "Not found session in context",
 				}
 				errorBind(w, r, er)
@@ -47,8 +52,8 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 			// UserInfo check
 			uinfo, err := sa.UserInfo(ses)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusUnAuthorized,
+				er := &authResult{
+					ErrCode: errFailSession,
 					Message: "Not found userinfo in session",
 				}
 				errorBind(w, r, er)
@@ -58,7 +63,7 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 			// AccessTokenが有効ならnext
 			timeout := time.Now().Sub(uinfo.Expire)
 			if timeout > 0 {
-				er := &ErrorRecord{Code: StatusLoggedIn}
+				er := &authResult{ErrCode: errLoggedIn}
 				errorBind(w, r, er)
 				return
 			}
@@ -69,8 +74,8 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 			ts := oc.TokenSource(ctx, uinfo.Token)
 			tnew, err := ts.Token()
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusRefreshTokenExpired,
+				er := &authResult{
+					ErrCode: errRefreshTokenExpired,
 					Message: err.Error(),
 				}
 				errorBind(w, r, er)
@@ -87,8 +92,8 @@ func Refresh(oc *oauth2.Config) func(http.Handler) http.Handler {
 				return
 			}
 			ctx = r.Context()
-			er := &ErrorRecord{Code: StatusAccessTokenUpdated}
-			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			er := &authResult{ErrCode: errAccessTokenUpdated}
+			ctx = context.WithValue(ctx, CtxAuthResult, er)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -111,41 +116,52 @@ func Reroute(epage *ErrorPages) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-			er, err := cac.ErrorRecord(r)
+			er, err := cac.authResult(r)
 			if err != nil {
-				er = &ErrorRecord{
-					Code:    StatusUnAuthorized,
-					Message: "Unknown login status",
+				er := &ErrorRecord{
+					StatusCode: http.StatusUnauthorized,
+					Message:    "Unknown login status",
 				}
 				ctx = context.WithValue(ctx, CtxErrorRecord, er)
-				ctx = context.WithValue(ctx, CtxHTTPStatus, http.StatusInternalServerError)
 				epage.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
-			switch er.Code {
-			case StatusLoggedIn, StatusAccessTokenUpdated:
+			switch er.ErrCode {
+			case errLoggedIn, errAccessTokenUpdated:
 				// login済みのため次へ
 				next.ServeHTTP(w, r)
 				return
-			case StatusLogIn:
+			case errLogIn:
 				// Login初回
 				// @todo Sessionに移動先候補があればそこに移動する
 				next.ServeHTTP(w, r)
 				return
-			case StatusRefreshTokenExpired:
+			case errRefreshTokenExpired:
 				// @todo 現在のアドレスを移動先として保持。再ログイン後に移動するため
 				http.Redirect(w, r, "/login", http.StatusFound)
 				return
-			case StatusInvalidBody:
-				ctx = context.WithValue(ctx, CtxHTTPStatus, http.StatusBadRequest)
-			case StatusFailGetToken, StatusFailSession:
-				ctx = context.WithValue(ctx, CtxHTTPStatus, http.StatusInternalServerError)
-			case StatusUnAuthorized:
+			case errInvalidBody:
+				ctx = context.WithValue(ctx, CtxErrorRecord, &ErrorRecord{
+					StatusCode: http.StatusBadRequest,
+					Message:    er.Message,
+				})
+			case errFailGetToken, errFailSession:
+				ctx = context.WithValue(ctx, CtxErrorRecord, &ErrorRecord{
+					StatusCode: http.StatusInternalServerError,
+					Message:    er.Message,
+				})
+			case errUnAuthorized:
 				// @todo 現在のアドレスを移動先として保持。再ログイン後に移動するため
-				ctx = context.WithValue(ctx, CtxHTTPStatus, http.StatusUnauthorized)
+				ctx = context.WithValue(ctx, CtxErrorRecord, &ErrorRecord{
+					StatusCode: http.StatusUnauthorized,
+					Message:    er.Message,
+				})
 			default:
-				ctx = context.WithValue(ctx, CtxHTTPStatus, http.StatusNotFound)
+				ctx = context.WithValue(ctx, CtxErrorRecord, &ErrorRecord{
+					StatusCode: http.StatusNotFound,
+					Message:    er.Message,
+				})
 			}
 			epage.ServeHTTP(w, r.WithContext(ctx))
 		}

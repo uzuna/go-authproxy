@@ -27,9 +27,9 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 	}
 	return func(next http.Handler) http.Handler {
 
-		errorBind := func(w http.ResponseWriter, r *http.Request, er *ErrorRecord) {
+		errorBind := func(w http.ResponseWriter, r *http.Request, er *authResult) {
 			ctx := r.Context()
-			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			ctx = context.WithValue(ctx, CtxAuthResult, er)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 		fn := func(w http.ResponseWriter, r *http.Request) {
@@ -37,8 +37,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			// form_check
 			err := r.ParseForm()
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusInvalidBody,
+				er := &authResult{
+					ErrCode: errInvalidBody,
 					Message: "Has not post body",
 				}
 				errorBind(w, r, er)
@@ -52,8 +52,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 
 			// id_token check
 			if len(ac.IDToken) < 1 {
-				er := &ErrorRecord{
-					Code:    StatusInvalidBody,
+				er := &authResult{
+					ErrCode: errInvalidBody,
 					Message: "Has not id_token",
 				}
 				errorBind(w, r, er)
@@ -63,16 +63,16 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			// get session data and check state
 			ses, err := ca.Session(r)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusFailSession,
+				er := &authResult{
+					ErrCode: errFailSession,
 					Message: "Can not use session",
 				}
 				errorBind(w, r, er)
 				return
 			}
 			if ac.State != ses.Values[sesState].(string) {
-				er := &ErrorRecord{
-					Code:    StatusInvalidBody,
+				er := &authResult{
+					ErrCode: errInvalidBody,
 					Message: "Unmatch state",
 				}
 				errorBind(w, r, er)
@@ -83,8 +83,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			// validate idtoken
 			_, err = jwt.Parse(ac.IDToken, jwtParser)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusInvalidBody,
+				er := &authResult{
+					ErrCode: errInvalidBody,
 					Message: err.Error(),
 				}
 				errorBind(w, r, er)
@@ -96,8 +96,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			defer cancel()
 			ot, err := oc.Exchange(exctx, ac.Code)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusFailGetToken,
+				er := &authResult{
+					ErrCode: errFailGetToken,
 					Message: err.Error(),
 				}
 				errorBind(w, r, er)
@@ -108,8 +108,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			uinfo, err := createUserInfo(ac.IDToken, ot)
 			uinfo.Token = ot
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusFailGetToken,
+				er := &authResult{
+					ErrCode: errFailGetToken,
 					Message: err.Error(),
 				}
 				errorBind(w, r, er)
@@ -120,8 +120,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			// save session state
 			err = ses.Save(r, w)
 			if err != nil {
-				er := &ErrorRecord{
-					Code:    StatusFailSession,
+				er := &authResult{
+					ErrCode: errFailSession,
 					Message: err.Error(),
 				}
 				errorBind(w, r, er)
@@ -129,8 +129,8 @@ func Validate(oc *oauth2.Config, jwtParser func(token *jwt.Token) (interface{}, 
 			}
 
 			ctx := r.Context()
-			er := &ErrorRecord{Code: StatusLogIn}
-			ctx = context.WithValue(ctx, CtxErrorRecord, er)
+			er := &authResult{ErrCode: errLogIn}
+			ctx = context.WithValue(ctx, CtxAuthResult, er)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 
