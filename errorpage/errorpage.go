@@ -1,10 +1,10 @@
-package authproxy
+package errorpage
 
 import (
 	"bytes"
+	"html/template"
 	"io"
 	"net/http"
-	"text/template"
 
 	"github.com/uzuna/go-authproxy/bindata"
 )
@@ -57,31 +57,19 @@ func (e *ErrorPages) Static(code int, doc string) {
 	}
 }
 
+// ErrorHandlerFunc register http handler func
 func (e *ErrorPages) ErrorHandlerFunc(code int, f ErrorHandlerFunc) {
 	e.Map[code] = f
 }
 
 func (e *ErrorPages) Error(w http.ResponseWriter, r *http.Request, err string, code int) {
+	if _, ok := e.Map[code]; !ok {
+		e.defaultHandlerFunc(w, r, &ErrorRecord{StatusCode: code, Message: err})
+		return
+	}
 	e.Map[code](w, r, &ErrorRecord{StatusCode: code, Message: err})
 }
 
 func (e *ErrorPages) DefaultHandlerFunc(f ErrorHandlerFunc) {
 	e.defaultHandlerFunc = f
-}
-
-func (e *ErrorPages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	er, ok := r.Context().Value(CtxErrorRecord).(*ErrorRecord)
-	if ok {
-		code := er.StatusCode
-		if f, ok := e.Map[code]; ok {
-			f(w, r, er)
-			return
-		}
-		// default rendering
-		e.defaultHandlerFunc(w, r, er)
-	}
-	e.defaultHandlerFunc(w, r, &ErrorRecord{
-		StatusCode: http.StatusNotFound,
-		Message:    "Not found",
-	})
 }

@@ -1,4 +1,4 @@
-package authproxy
+package nonce
 
 import (
 	"fmt"

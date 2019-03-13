@@ -1,4 +1,4 @@
-package errorpages
+package errorpage
 
 import "net/http"
 
