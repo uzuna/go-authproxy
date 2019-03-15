@@ -6,21 +6,31 @@ import (
 	"time"
 )
 
-func NewNonceStore(lifeTime time.Duration) *NonceStore {
-	return &NonceStore{
+// NewStore godoc
+// Create Nonce Store with timeout
+func NewStore(lifeTime time.Duration) Store {
+	return &store{
 		lock:     new(sync.Mutex),
 		data:     make(map[string]struct{}),
 		lifeTime: lifeTime,
 	}
 }
 
-type NonceStore struct {
+// Store godoc
+// Nonce is onetime id so it can check only once after get.
+type Store interface {
+	Get() string
+	CheckOnce(nonce string) bool
+}
+
+// mnonce store implementation storeon memory with timeout
+type store struct {
 	lock     *sync.Mutex
 	data     map[string]struct{}
 	lifeTime time.Duration
 }
 
-func (s *NonceStore) Get() string {
+func (s *store) Get() string {
 	nonce := fmt.Sprintf("%x%x",
 		time.Now().Unix(),
 		time.Now().UnixNano(),
@@ -35,7 +45,7 @@ func (s *NonceStore) Get() string {
 	return nonce
 }
 
-func (s *NonceStore) CheckOnce(nonce string) bool {
+func (s *store) CheckOnce(nonce string) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if _, ok := s.data[nonce]; ok {
