@@ -199,3 +199,7 @@ Proxyであるから基本はSession内に保持する
 
 Routingは後段に任せてここでは認証情報の付与だけを行う
 任意の名前とパラメータをHederに書き込む
+
+-> Request parse
+    -> IDToken parse
+        -> IDToken validation 

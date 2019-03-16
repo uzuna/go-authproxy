@@ -59,9 +59,9 @@ func (c *IDTokenClaims) IssuedAt() time.Time {
 	return time.Unix(c.IssuedAtInt, 0)
 }
 
-// getJWK is generate jwt instance from jwt data
+// ParseJWK is generate jwt instance from jwt data
 // return keyfunc is included jwkset
-func getJWK(b []byte) (jwt.Keyfunc, error) {
+func ParseJWK(b []byte) (jwt.Keyfunc, error) {
 	jwkset, err := jwk.Parse(b)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -133,7 +133,7 @@ func (t *IDTokenValidator) Validate(claims *IDTokenClaims) error {
 	}
 
 	sub := time.Since(claims.Expire())
-	if sub <= time.Duration(0) {
+	if sub >= time.Duration(0) {
 		return errors.Errorf("Expired %s", sub.String())
 	}
 
