@@ -9,6 +9,7 @@ import (
 // IDTokenBody is information of authenticate responce
 type IDTokenBody struct {
 	Token string
+	Code  string
 	State string
 }
 
@@ -32,7 +33,7 @@ func ParseIDTokenBody(r *http.Request) (*IDTokenBody, error) {
 	// When Authentication Error Response
 	errorStr := r.Form.Get("error")
 	if len(errorStr) > 0 {
-		return nil, errors.Errorf("[Authentication Error: %s]%s", errorStr, r.Form.Get("error_descriptions"))
+		return nil, errors.Errorf("[Authentication Error: %s]%s", errorStr, r.Form.Get("error_description"))
 	}
 
 	// stateを確認
@@ -46,9 +47,11 @@ func ParseIDTokenBody(r *http.Request) (*IDTokenBody, error) {
 	if len(idtokenStr) < 1 {
 		return nil, errors.Errorf("[Request Error: Not found id_token]")
 	}
+	codeStr := r.Form.Get("code")
 
 	return &IDTokenBody{
 		Token: idtokenStr,
+		Code:  codeStr,
 		State: state,
 	}, nil
 }
