@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -100,6 +101,10 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 			ep.Error(w, r, err.Error(), 401)
 			return
 		}
+		redirectPath := "/"
+		if len(ainfo.LoginReferer) > 0 {
+			redirectPath = ainfo.LoginReferer
+		}
 		ainfo.AuthenticationState = ""
 		ainfo.IDToken = ares.IDToken
 		ainfo.ExpireAt = ares.Claims.Expire()
@@ -112,7 +117,7 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 		}
 
 		// Return to Top
-		w.Header().Set("Location", "/")
+		w.Header().Set("Location", redirectPath)
 		w.WriteHeader(http.StatusSeeOther)
 	})
 
@@ -135,6 +140,13 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 		// generate URL
 		state := oidc.GenState()
 		ainfo.AuthenticationState = state
+
+		// @TODO 自身と同じOrigin場合のみRedirect先を保持する
+		referrer := r.Header.Get("Referer")
+		if strings.HasPrefix(referrer, "http://localhost") ||
+			strings.HasPrefix(referrer, "https://localhost") {
+			ainfo.LoginReferer = referrer
+		}
 		authpath, err := a.AuthURL(state,
 			oidc.SetURLParam("response_mode", "form_post"),
 		)
@@ -162,11 +174,47 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 		}
 
 		// show
-
 		w.Header().Set("Content-Type", "text/html")
 		diff := ainfo.ExpireAt.Sub(time.Now())
 		fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
 		fmt.Fprintf(w, "<p>Accept. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
+	})
+
+	loginRedirect := func() func(next http.Handler) http.Handler {
+		return func(next http.Handler) http.Handler {
+			fn := func(w http.ResponseWriter, r *http.Request) {
+				ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
+				if !ok {
+					ep.Error(w, r, "Fail get session data", 503)
+					return
+				}
+				// Show Login page when not loggedin
+				// 301だとRefererが取れないため401ページを中継する
+				if !ainfo.LoggedIn || time.Since(ainfo.ExpireAt) > time.Second {
+					ep.Error(w, r, "Please Login.", 401)
+					return
+				}
+				next.ServeHTTP(w, r)
+			}
+			return http.HandlerFunc(fn)
+		}
+	}
+	r.Route("/withauth", func(r chi.Router) {
+		r.Use(loginRedirect())
+		r.MethodFunc("GET", "/*", func(w http.ResponseWriter, r *http.Request) {
+			// Check authinfo
+			ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
+			if !ok {
+				ep.Error(w, r, "Fail get session data", 503)
+				return
+			}
+
+			// show
+			w.Header().Set("Content-Type", "text/html")
+			diff := ainfo.ExpireAt.Sub(time.Now())
+			fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
+			fmt.Fprintf(w, "<p>Wellcome to [%s]. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", r.URL.Path, ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
+		})
 	})
 
 	// Listen Server
