@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -29,17 +30,31 @@ type Authenticator interface {
 	Validate(req *http.Request) (Token, error)
 }
 
-type authenticator struct {
-}
-
 type Config struct {
 	ClientID     string
 	ClientSecret string
-	EndPoint     Endpoint
+	Endpoint     Endpoint
 	RedirectURL  string
+	JWKURL       string
+	Scopes       []string
+	ResponseType string
 }
 
 type Endpoint struct {
 	AuthURL  string
 	TokenURL string
+}
+
+// URLOptionalParameter godoc
+// idea from oauth2 AuthCodeOption
+type URLOptionalParameter interface {
+	setValue(url.Values)
+}
+type setParam struct{ k, v string }
+
+func (p setParam) setValue(m url.Values) { m.Set(p.k, p.v) }
+
+// SetURLParam builds an URLOptionalParameter which passes key/value parameters
+func SetURLParam(key, value string) URLOptionalParameter {
+	return setParam{key, value}
 }

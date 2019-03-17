@@ -14,7 +14,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func TestParseIDTokenBody(t *testing.T) {
+func TestParseAuthResponse(t *testing.T) {
 	code := "SplxlOBeZQQYbYS6WxSbIA"
 	state := "123456"
 	b, err := ioutil.ReadFile("./testdata/idtoken_sample.txt")
@@ -29,12 +29,12 @@ func TestParseIDTokenBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", rw)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	tb, err := oidc.ParseIDTokenBody(req)
+	tb, err := oidc.ParseAuthResponse(req)
 	checkError(t, errors.WithStack(err))
-	assert.Equal(t, tb.Token, string(b))
+	assert.Equal(t, tb.IDToken, string(b))
 	assert.Equal(t, tb.State, state)
 }
-func TestParseIDTokenBodyFail(t *testing.T) {
+func TestParseAuthResponseFail(t *testing.T) {
 	state := "123456"
 	v := url.Values{}
 	v.Set("error", "invalid_request")
@@ -46,7 +46,7 @@ func TestParseIDTokenBodyFail(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", rw)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	_, err := oidc.ParseIDTokenBody(req)
+	_, err := oidc.ParseAuthResponse(req)
 	// assert.Equal(t, tb, nil)
 	assert.True(t, strings.Contains(err.Error(), "invalid_request"))
 	assert.True(t, strings.Contains(err.Error(), "Unsupported response_type"), err.Error())

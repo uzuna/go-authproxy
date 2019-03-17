@@ -184,12 +184,12 @@ Proxyであるから基本はSession内に保持する
 - `Token(token_string, expire_at)`を返すのも検討するか?
   APIに対してもProxyするならなくても問題ない
 - CLIがTokenを得るには?
-    - localhostで鵜あるのが今は良さそうな気がするが実装が重い
-    - Python CLIとかからするとサーバーと通信したい感がある
-        - 発行アドレスをProxyに投げる
-        - proxyは通常通り処理
-        - 発行アドレスをもとにlocalhostに投げなおす
-    - SAMLで認証をする
+  - localhostで鵜あるのが今は良さそうな気がするが実装が重い
+  - Python CLIとかからするとサーバーと通信したい感がある
+    - 発行アドレスをProxyに投げる
+    - proxyは通常通り処理
+    - 発行アドレスをもとにlocalhostに投げなおす
+  - SAMLで認証をする
 
 
 - CLIに対応するために`Authorization`がある場合はそのまま通過させる
@@ -200,6 +200,13 @@ Proxyであるから基本はSession内に保持する
 Routingは後段に任せてここでは認証情報の付与だけを行う
 任意の名前とパラメータをHederに書き込む
 
--> Request parse
-    -> IDToken parse
-        -> IDToken validation 
+- OIDC Config
+  - AuthURL()
+  - Validate()
+    - Request parse
+      - IDToken parse
+        - IDToken validation
+    - switch responce_type 
+      - Hybrid Flow?
+      - Implicit Flow
+

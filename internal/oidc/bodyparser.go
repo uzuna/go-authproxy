@@ -6,15 +6,15 @@ import (
 	"github.com/pkg/errors"
 )
 
-// IDTokenBody is information of authenticate responce
-type IDTokenBody struct {
-	Token string
-	Code  string
-	State string
+// AuthResponse is information of authenticate responce
+type AuthResponse struct {
+	IDToken string
+	Code    string
+	State   string
 }
 
-// ParseIDTokenBody is Parsing Request
-func ParseIDTokenBody(r *http.Request) (*IDTokenBody, error) {
+// ParseAuthResponse is Parsing Request
+func ParseAuthResponse(r *http.Request) (*AuthResponse, error) {
 	var err error
 	// form_check
 
@@ -49,9 +49,9 @@ func ParseIDTokenBody(r *http.Request) (*IDTokenBody, error) {
 	}
 	codeStr := r.Form.Get("code")
 
-	return &IDTokenBody{
-		Token: idtokenStr,
-		Code:  codeStr,
-		State: state,
+	return &AuthResponse{
+		IDToken: idtokenStr,
+		Code:    codeStr,
+		State:   state,
 	}, nil
 }
