@@ -87,6 +87,8 @@ func (a *authenticator) Authenticate(r *http.Request) (*AuthResponse, error) {
 		return nil, errors.Errorf("Invalid nonce")
 	}
 
+	ares.Claims = claims
+
 	// @TODO switch grant flow
 	// c := a.config
 	// if strings.Contains(c.ResponseType, "code") && len(ares.Code) > 0 {

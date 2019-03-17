@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"github.com/uzuna/go-authproxy/internal/session"
 
 	"github.com/go-chi/chi"
-	"github.com/gorilla/sessions"
 	"github.com/quasoft/memstore"
 	"github.com/uzuna/go-authproxy/oidc"
 	"gopkg.in/yaml.v2"
@@ -24,6 +22,10 @@ import (
 var (
 	sessionKeyState = "state" // Identity key of session
 )
+
+type contextKey struct {
+	Name string
+}
 
 func main() {
 
@@ -40,7 +42,11 @@ func main() {
 	panicError(err)
 	a, err := oidc.NewAuthenticator(&oidcconf)
 	panicError(err)
-	server(a, store)
+
+	sessionName := "demo"
+	aikey := &contextKey{"authinfo"}
+	as := session.NewAuthStore(store, sessionName, aikey)
+	server(a, as, aikey)
 }
 
 func panicError(err error) {
@@ -49,9 +55,9 @@ func panicError(err error) {
 	}
 }
 
-func server(a oidc.Authenticator, store sessions.Store) error {
+func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error {
 
-	// 	// CustomErrorPages
+	// CustomErrorPages
 	ep, err := errorpage.NewErrorPages()
 	if err != nil {
 		return errors.WithStack(err)
@@ -64,9 +70,18 @@ func server(a oidc.Authenticator, store sessions.Store) error {
 	// mux
 	r := chi.NewRouter()
 
-	// mount session information
-	r.Use(session.Session(store, "demo"))
+	// Setr defaul t not found page
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		s := fmt.Sprintf("Not found path: [%s]", r.URL.Path)
+		ep.Error(w, r, s, 404)
+	})
 
+	// mount session information
+	r.Use(as.Handler())
+
+	// Route of Authenticate CallBack
+	// Parse Authenticate response
+	// and authinfo to set to session store
 	r.MethodFunc("POST", "/cb", func(w http.ResponseWriter, r *http.Request) {
 		ares, err := a.Authenticate(r)
 		if err != nil {
@@ -74,43 +89,52 @@ func server(a oidc.Authenticator, store sessions.Store) error {
 			return
 		}
 
-		// Check session
-		ses, err := session.GetSession(r)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
-			return
-		}
-		state, ok := ses.Values[sessionKeyState].(string)
+		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
 		if !ok {
-			err = errors.Errorf("Has not state in session")
-			ep.Error(w, r, err.Error(), 503)
+			ep.Error(w, r, "Fail get session data", 503)
 			return
 		}
-		if ares.State != state {
+
+		if ares.State != ainfo.AuthenticationState {
 			err = errors.Errorf("Unmatch state")
 			ep.Error(w, r, err.Error(), 401)
 			return
 		}
+		ainfo.AuthenticationState = ""
+		ainfo.IDToken = ares.IDToken
+		ainfo.ExpireAt = ares.Claims.Expire()
+		ainfo.LoggedIn = true
 
-		// show
-		enc := json.NewEncoder(w)
-		err = enc.Encode(&ares)
+		err = as.Save(w, r, ainfo)
 		if err != nil {
 			ep.Error(w, r, err.Error(), 503)
 			return
 		}
 
+		// Return to Top
+		w.Header().Set("Location", "/")
+		w.WriteHeader(http.StatusSeeOther)
 	})
+
+	// Route of Login Redirect
+	// This generates and to redierct to AuthURL for OIDC login
 	r.MethodFunc("GET", "/login", func(w http.ResponseWriter, r *http.Request) {
-		// Check session
-		ses, err := session.GetSession(r)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
+		// Check authinfo
+		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
+		if !ok {
+			ep.Error(w, r, "Fail get session data", 503)
+			return
+		}
+		// I lggedin and not expired return home
+		if ainfo.LoggedIn && time.Since(ainfo.ExpireAt) < time.Duration(0) {
+			w.Header().Set("Location", "/")
+			w.WriteHeader(http.StatusSeeOther)
 			return
 		}
 
 		// generate URL
 		state := oidc.GenState()
+		ainfo.AuthenticationState = state
 		authpath, err := a.AuthURL(state,
 			oidc.SetURLParam("response_mode", "form_post"),
 		)
@@ -118,86 +142,34 @@ func server(a oidc.Authenticator, store sessions.Store) error {
 			ep.Error(w, r, err.Error(), 503)
 			return
 		}
-
-		// save state this session
-		ses.Values[sessionKeyState] = state
-		err = ses.Save(r, w)
+		err = as.Save(w, r, ainfo)
 		if err != nil {
 			ep.Error(w, r, err.Error(), 503)
 			return
 		}
+
 		w.Header().Set("Location", authpath)
 		w.WriteHeader(http.StatusFound)
 	})
+
+	// Route of Top page
 	r.MethodFunc("GET", "/", func(w http.ResponseWriter, r *http.Request) {
-		// Check session
-		ses, err := session.GetSession(r)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
+		// Check authinfo
+		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
+		if !ok {
+			ep.Error(w, r, "Fail get session data", 503)
 			return
 		}
 
-		log.Println(ses.Values)
 		// show
-		w.Write([]byte("Accept"))
+
+		w.Header().Set("Content-Type", "text/html")
+		diff := ainfo.ExpireAt.Sub(time.Now())
+		fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
+		fmt.Fprintf(w, "<p>Accept. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
 	})
 
-	// 	a := &authproxy.ContextAccess{}
-
-	// 	r.Group(func(r chi.Router) {
-	// 		r.Use(authproxy.Refresh(oc))
-	// 		r.Use(rr)
-	// 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-	// 			ses, err := a.Session(r)
-	// 			if err != nil {
-	// 				http.Error(w, err.Error(), http.StatusUnauthorized)
-	// 				return
-	// 			}
-	// 			er, err := a.ErrorRecord(r)
-
-	// 			// if err != nil {
-	// 			// 	http.Error(w, err.Error(), http.StatusUnauthorized)
-	// 			// 	return
-	// 			// }
-	// 			switch er.Code {
-	// 			// case authproxy.StatusUnAuthorized:
-	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 			// 	doc := `
-	// 			// 		<p>You are not authorized. <a href="/login">Prease Login</a></p>
-	// 			// 	`
-	// 			// 	w.Write([]byte(doc))
-	// 			// case authproxy.StatusAccessTokenExpired:
-
-	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 			// 	doc := `
-	// 			// 		<p>Your Access Token Expired.</p>
-	// 			// 	`
-	// 			// 	w.Write([]byte(doc))
-	// 			// case authproxy.StatusRefreshTokenExpired:
-
-	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 			// 	doc := `
-	// 			// 		<p>Your Refresh Token Expired. <a href="/login">Prease ReLogin</a></p>
-	// 			// 	`
-	// 			// 	w.Write([]byte(doc))
-	// 			case authproxy.StatusLoggedIn, authproxy.StatusAccessTokenUpdated:
-	// 				sa := &authproxy.SessionAccess{}
-	// 				token, err := sa.Token(ses)
-	// 				if err != nil {
-	// 					http.Error(w, err.Error(), http.StatusInternalServerError)
-	// 					return
-	// 				}
-
-	// 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 				doc := fmt.Sprintf(`<p>You are %s</p>`, token.Email)
-	// 				w.Write([]byte(doc))
-	// 			default:
-	// 				w.Write([]byte("Not Login"))
-	// 			}
-
-	// 		})
-	// 	})
-
+	// Listen Server
 	addr := os.Getenv("HTTP_ADDR")
 	if len(addr) < 1 {
 		addr = ":8989"

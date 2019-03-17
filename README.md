@@ -210,3 +210,22 @@ Routingは後段に任せてここでは認証情報の付与だけを行う
       - Hybrid Flow?
       - Implicit Flow
 
+- Session
+  - Store Loggedin
+  - Store Token and ExpireAt
+  - Store State
+  - Store Login redirect referer
+
+```yaml
+# config.yml
+client_id: "***"
+client_secret: "***"
+endpoint:
+  auth_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+  token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+redirect_url: "***"
+scopes:
+  - openid
+jwk_url: https://login.microsoftonline.com/common/discovery/v2.0/keys
+response_type: id_token
+```
