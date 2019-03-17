@@ -5,13 +5,30 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/lestrrat-go/jwx/jwk"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/uzuna/go-authproxy/internal/nonce"
 )
 
-// func NewAuthenticator()
+func NewAuthenticator(c *Config) (Authenticator, error) {
+	set, err := jwk.FetchHTTP(c.JWKURL)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	kf, err := MakeKeyfunc(set)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return &authenticator{
+		ns:      nonce.NewStore(time.Second * 60),
+		config:  c,
+		keyfunc: kf,
+	}, nil
+}
 
 type authenticator struct {
 	ns      nonce.Store

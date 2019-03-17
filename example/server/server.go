@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,18 +10,20 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/joho/godotenv"
-	"github.com/quasoft/memstore"
-	"github.com/uzuna/go-authproxy/config"
+	"github.com/pkg/errors"
+	"github.com/uzuna/go-authproxy/errorpage"
+	"github.com/uzuna/go-authproxy/internal/session"
 
 	"github.com/go-chi/chi"
-	authproxy "github.com/uzuna/go-authproxy"
-
 	"github.com/gorilla/sessions"
+	"github.com/quasoft/memstore"
+	"github.com/uzuna/go-authproxy/oidc"
+	"gopkg.in/yaml.v2"
 )
 
-var store sessions.Store
-var route chi.Router
+var (
+	sessionKeyState = "state" // Identity key of session
+)
 
 func main() {
 
@@ -28,91 +31,177 @@ func main() {
 		[]byte("authkey123"),
 		[]byte("enckey12341234567890123456789012"),
 	)
+	_ = store
+	var oidcconf oidc.Config
+	f, err := os.Open("./config.yml")
+	panicError(err)
+	dec := yaml.NewDecoder(f)
+	err = dec.Decode(&oidcconf)
+	panicError(err)
+	a, err := oidc.NewAuthenticator(&oidcconf)
+	panicError(err)
+	server(a, store)
+}
 
-	godotenv.Load()
-	c := config.LoadConfig()
-	oc := config.GetOauthConfig(c)
-	ns := authproxy.NewNonceStore(time.Minute)
-
-	res, err := http.Get(os.Getenv("OAUTH_KEYS_URL"))
+func panicError(err error) {
 	if err != nil {
 		panic(err)
 	}
-	set, err := authproxy.ParseKeys(res.Body)
-	if err != nil {
-		panic(err)
-	}
+}
 
-	// CustomErrorPages
-	ep := authproxy.NewErrorPages()
-	rh := authproxy.RerouteRedirect(ep, "/")
-	rr := authproxy.Reroute(ep)
-	authMw := authproxy.Authorize(set, oc, ns)
-	authHandler := authMw(rh)
+func server(a oidc.Authenticator, store sessions.Store) error {
+
+	// 	// CustomErrorPages
+	ep, err := errorpage.NewErrorPages()
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	// 	rh := authproxy.RerouteRedirect(ep, "/")
+	// 	rr := authproxy.Reroute(ep)
+	// 	authMw := authproxy.Authorize(set, oc, ns)
+	// 	authHandler := authMw(rh)
 
 	// mux
 	r := chi.NewRouter()
-	r.Use(authproxy.Session(store, "demo"))
-	r.Method("POST", "/", authHandler)
-	r.Method("GET", "/login", authproxy.Login(oc, ns))
 
-	a := &authproxy.ContextAccess{}
+	// mount session information
+	r.Use(session.Session(store, "demo"))
 
-	r.Group(func(r chi.Router) {
-		r.Use(authproxy.Refresh(oc))
-		r.Use(rr)
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			ses, err := a.Session(r)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
-				return
-			}
-			er, err := a.ErrorRecord(r)
+	r.MethodFunc("POST", "/cb", func(w http.ResponseWriter, r *http.Request) {
+		ares, err := a.Authenticate(r)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 401)
+			return
+		}
 
-			// if err != nil {
-			// 	http.Error(w, err.Error(), http.StatusUnauthorized)
-			// 	return
-			// }
-			switch er.Code {
-			// case authproxy.StatusUnAuthorized:
-			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			// 	doc := `
-			// 		<p>You are not authorized. <a href="/login">Prease Login</a></p>
-			// 	`
-			// 	w.Write([]byte(doc))
-			// case authproxy.StatusAccessTokenExpired:
+		// Check session
+		ses, err := session.GetSession(r)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
+		state, ok := ses.Values[sessionKeyState].(string)
+		if !ok {
+			err = errors.Errorf("Has not state in session")
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
+		if ares.State != state {
+			err = errors.Errorf("Unmatch state")
+			ep.Error(w, r, err.Error(), 401)
+			return
+		}
 
-			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			// 	doc := `
-			// 		<p>Your Access Token Expired.</p>
-			// 	`
-			// 	w.Write([]byte(doc))
-			// case authproxy.StatusRefreshTokenExpired:
+		// show
+		enc := json.NewEncoder(w)
+		err = enc.Encode(&ares)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
 
-			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			// 	doc := `
-			// 		<p>Your Refresh Token Expired. <a href="/login">Prease ReLogin</a></p>
-			// 	`
-			// 	w.Write([]byte(doc))
-			case authproxy.StatusLoggedIn, authproxy.StatusAccessTokenUpdated:
-				sa := &authproxy.SessionAccess{}
-				token, err := sa.Token(ses)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
+	})
+	r.MethodFunc("GET", "/login", func(w http.ResponseWriter, r *http.Request) {
+		// Check session
+		ses, err := session.GetSession(r)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
 
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				doc := fmt.Sprintf(`<p>You are %s</p>`, token.Email)
-				w.Write([]byte(doc))
-			default:
-				w.Write([]byte("Not Login"))
-			}
+		// generate URL
+		state := oidc.GenState()
+		authpath, err := a.AuthURL(state,
+			oidc.SetURLParam("response_mode", "form_post"),
+		)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
 
-		})
+		// save state this session
+		ses.Values[sessionKeyState] = state
+		err = ses.Save(r, w)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
+		w.Header().Set("Location", authpath)
+		w.WriteHeader(http.StatusFound)
+	})
+	r.MethodFunc("GET", "/", func(w http.ResponseWriter, r *http.Request) {
+		// Check session
+		ses, err := session.GetSession(r)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
+			return
+		}
+
+		log.Println(ses.Values)
+		// show
+		w.Write([]byte("Accept"))
 	})
 
+	// 	a := &authproxy.ContextAccess{}
+
+	// 	r.Group(func(r chi.Router) {
+	// 		r.Use(authproxy.Refresh(oc))
+	// 		r.Use(rr)
+	// 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+	// 			ses, err := a.Session(r)
+	// 			if err != nil {
+	// 				http.Error(w, err.Error(), http.StatusUnauthorized)
+	// 				return
+	// 			}
+	// 			er, err := a.ErrorRecord(r)
+
+	// 			// if err != nil {
+	// 			// 	http.Error(w, err.Error(), http.StatusUnauthorized)
+	// 			// 	return
+	// 			// }
+	// 			switch er.Code {
+	// 			// case authproxy.StatusUnAuthorized:
+	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 			// 	doc := `
+	// 			// 		<p>You are not authorized. <a href="/login">Prease Login</a></p>
+	// 			// 	`
+	// 			// 	w.Write([]byte(doc))
+	// 			// case authproxy.StatusAccessTokenExpired:
+
+	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 			// 	doc := `
+	// 			// 		<p>Your Access Token Expired.</p>
+	// 			// 	`
+	// 			// 	w.Write([]byte(doc))
+	// 			// case authproxy.StatusRefreshTokenExpired:
+
+	// 			// 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 			// 	doc := `
+	// 			// 		<p>Your Refresh Token Expired. <a href="/login">Prease ReLogin</a></p>
+	// 			// 	`
+	// 			// 	w.Write([]byte(doc))
+	// 			case authproxy.StatusLoggedIn, authproxy.StatusAccessTokenUpdated:
+	// 				sa := &authproxy.SessionAccess{}
+	// 				token, err := sa.Token(ses)
+	// 				if err != nil {
+	// 					http.Error(w, err.Error(), http.StatusInternalServerError)
+	// 					return
+	// 				}
+
+	// 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 				doc := fmt.Sprintf(`<p>You are %s</p>`, token.Email)
+	// 				w.Write([]byte(doc))
+	// 			default:
+	// 				w.Write([]byte("Not Login"))
+	// 			}
+
+	// 		})
+	// 	})
+
 	addr := os.Getenv("HTTP_ADDR")
+	if len(addr) < 1 {
+		addr = ":8989"
+	}
 	srv := &http.Server{Addr: addr, Handler: r}
 	go func() {
 		log.Println(fmt.Sprintf("Listen %s", addr))
@@ -127,5 +216,5 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 	srv.Shutdown(ctx)
-
+	return nil
 }

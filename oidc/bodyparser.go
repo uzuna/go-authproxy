@@ -8,9 +8,9 @@ import (
 
 // AuthResponse is information of authenticate responce
 type AuthResponse struct {
-	IDToken string
-	Code    string
-	State   string
+	IDToken string `json:"id_token"`
+	Code    string `json:"code"`
+	State   string `json:"state"`
 }
 
 // ParseAuthResponse is Parsing Request

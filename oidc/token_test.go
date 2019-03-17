@@ -8,7 +8,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"github.com/uzuna/go-authproxy/internal/oidc"
+	"github.com/uzuna/go-authproxy/oidc"
 )
 
 const (

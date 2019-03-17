@@ -59,13 +59,17 @@ func (c *IDTokenClaims) IssuedAt() time.Time {
 	return time.Unix(c.IssuedAtInt, 0)
 }
 
-// ParseJWK is generate jwt instance from jwt data
-// return keyfunc is included jwkset
+// ParseJWK generates jwt instance from jwt data
 func ParseJWK(b []byte) (jwt.Keyfunc, error) {
 	jwkset, err := jwk.Parse(b)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
+	return MakeKeyfunc(jwkset)
+}
+
+// MakeKeyfunc genarates jwt.keyfunc from jwk.Set
+func MakeKeyfunc(jwkset *jwk.Set) (jwt.Keyfunc, error) {
 	return func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); ok {
 			// Check kid

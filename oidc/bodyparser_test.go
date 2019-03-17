@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uzuna/go-authproxy/internal/oidc"
+	"github.com/uzuna/go-authproxy/oidc"
 
 	"github.com/pkg/errors"
 )

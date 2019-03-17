@@ -7,13 +7,15 @@ import (
 )
 
 const (
+	expectContentType = "application/x-www-form-urlencoded"
+
 	// ResponceTypeCode    = ResponceType("code")
 	// ResponceTypeToken   = ResponceType("token")
 	// ResponceTypeIDTOken = ResponceType("id_token")
 
-	TokenTypeIDToken = iota
-	TokenTypeAccessToken
-	TokenTypeRefreshToken
+	// TokenTypeIDToken = iota
+	// TokenTypeAccessToken
+	// TokenTypeRefreshToken
 )
 
 type ResponceType string
@@ -26,23 +28,24 @@ type Token interface {
 }
 
 type Authenticator interface {
-	AuthURL(state string) (string, error)
-	Validate(req *http.Request) (Token, error)
+	AuthURL(state string, opts ...URLOptionalParameter) (string, error)
+	Authenticate(req *http.Request) (*AuthResponse, error)
+	// Validate(req *http.Request) (Token, error)
 }
 
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	Endpoint     Endpoint
-	RedirectURL  string
-	JWKURL       string
-	Scopes       []string
-	ResponseType string
+	ClientID     string   `json:"client_id" yaml:"client_id"`
+	ClientSecret string   `json:"client_secret" yaml:"client_secret"`
+	Endpoint     Endpoint `json:"endpoint" yaml:"endpoint"`
+	RedirectURL  string   `json:"redirect_url" yaml:"redirect_url"`
+	JWKURL       string   `json:"jwk_url" yaml:"jwk_url"`
+	Scopes       []string `json:"scopes" yaml:"scopes"`
+	ResponseType string   `json:"response_type" yaml:"response_type"`
 }
 
 type Endpoint struct {
-	AuthURL  string
-	TokenURL string
+	AuthURL  string `json:"auth_url" yaml:"auth_url"`
+	TokenURL string `json:"token_url" yaml:"token_url"`
 }
 
 // URLOptionalParameter godoc
