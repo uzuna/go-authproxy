@@ -1,17 +1,35 @@
-## AuthProxy
+# AuthProxy
 
 OpenIDConnect認証の情報をSessionで保持する認証Proxy
 
+バックエンドにあるのは`JWT`で認証を行う`Envoy+gRPC`もしくは`RESTAPI`が
+ある状況で、任意のブラウザからのアクセスをOIDCを使って認証をする。
 
-1. session idでユーザーアクセスを識別する
-2. sidとtokenを結び付けて、ユーザの認証情報を自動的に付与する
-3. sidとtokenの更新を行う
-4. proxyする <-これは別の機能
-
-session idはstore側で生成するのが普通らしい
+- AuthProxyはOIDC認証を行い、認証後は速やかにただのプロキシとしてふるまう
+- 認証済みのセッションは必ず`Authorization`ヘッダーにJWTを書き込んで次のサーバーにProxyする。
+- ユーザーで必要なヘッダーの追加も可能にする
 
 
-1. Tokenがあれば通す
-2. Tokenの期限が近ければ更新を行う
-3. Tokenの期限切れの場合はRefreshを試行し、だめなら認証へ移動する
-2. Tokenがなければ認証へ移動する
+## Config
+
+```yaml
+# config.yml
+client_id: "***"
+client_secret: "***"
+endpoint:
+  auth_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+  token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+redirect_url: "***"
+scopes:
+  - openid
+jwk_url: https://login.microsoftonline.com/common/discovery/v2.0/keys
+response_type: id_token
+issuers: 
+  - https://login.microsoftonline.com/***/v2.0
+```
+
+```ini
+APX_PORT=8989
+APX_FORWARDTO=http://localhost:8080
+APX_ACCEPTORIGINPTN="^https?\:\/{2}localhost"
+```
