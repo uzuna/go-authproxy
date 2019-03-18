@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/signal"
 	"regexp"
@@ -63,10 +64,20 @@ func panicError(err error) {
 
 func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}) error {
 
-	// 	rh := authproxy.RerouteRedirect(ep, "/")
-	// 	rr := authproxy.Reroute(ep)
-	// 	authMw := authproxy.Authorize(set, oc, ns)
-	// 	authHandler := authMw(rh)
+	// Proxy to other server
+	director := func(r *http.Request) {
+		r.URL.Scheme = "http"
+		r.URL.Host = "localhost:8080"
+
+		// Check authinfo
+		ainfo, err := rp.AuthInfo(r)
+		if err != nil {
+			return
+		}
+		r.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ainfo.IDToken))
+		r.Header.Set("Forwerded", "localhost:8989")
+	}
+	rvh := &httputil.ReverseProxy{Director: director}
 
 	// mux
 	r := chi.NewRouter()
@@ -109,31 +120,39 @@ func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}
 
 	r.Route("/withauth", func(r chi.Router) {
 		r.Use(rp.AuthRedirect())
-		r.MethodFunc("GET", "/*", func(w http.ResponseWriter, r *http.Request) {
-			// Check authinfo
-			ainfo, err := rp.AuthInfo(r)
-			if err != nil {
-				ep.Error(w, r, err.Error(), 503)
-				return
-			}
-
-			// show
-			w.Header().Set("Content-Type", "text/html")
-			diff := ainfo.ExpireAt.Sub(time.Now())
-			fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
-			fmt.Fprintf(w, "<p>Wellcome to [%s]. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", r.URL.Path, ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
-		})
+		r.Handle("/*", rvh)
 	})
+	r.Handle("/proxy/*", rvh)
 
-	// Listen Server
-	addr := os.Getenv("HTTP_ADDR")
-	if len(addr) < 1 {
-		addr = ":8989"
-	}
-	srv := &http.Server{Addr: addr, Handler: r}
+	// Listen Proxy Server
+	s1addr := ":8989"
+	srv := &http.Server{Addr: s1addr, Handler: r}
 	go func() {
-		log.Println(fmt.Sprintf("Listen %s", addr))
+		log.Println(fmt.Sprintf("Listen %s", s1addr))
 		if err := srv.ListenAndServe(); err != nil {
+			log.Print(err)
+		}
+	}()
+
+	// Listen Echo Server
+	recho := chi.NewRouter()
+	recho.MethodFunc("GET", "/*", func(w http.ResponseWriter, r *http.Request) {
+		// Check Header
+		bearer := r.Header.Get("Authorization")
+		forw := r.Header.Get("Forwerded")
+		// show
+		// w.Header().Set("Content-Type", "text/html")
+		// diff := ainfo.ExpireAt.Sub(time.Now())
+		// fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
+		// fmt.Fprintf(w, "<p>Wellcome to [%s]. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", r.URL.Path, ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
+		w.Write([]byte(bearer))
+		w.Write([]byte(forw))
+	})
+	s2addr := ":8080"
+	srv2 := &http.Server{Addr: s2addr, Handler: recho}
+	go func() {
+		log.Println(fmt.Sprintf("Listen %s", s2addr))
+		if err := srv2.ListenAndServe(); err != nil {
 			log.Print(err)
 		}
 	}()
@@ -144,5 +163,6 @@ func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 	srv.Shutdown(ctx)
+	srv2.Shutdown(ctx)
 	return nil
 }
