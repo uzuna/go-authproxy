@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/uzuna/go-authproxy/errorpage"
 	"github.com/uzuna/go-authproxy/internal/session"
 	"github.com/uzuna/go-authproxy/router"
@@ -63,21 +64,15 @@ func panicError(err error) {
 }
 
 func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}) error {
-
 	// Proxy to other server
-	director := func(r *http.Request) {
-		r.URL.Scheme = "http"
-		r.URL.Host = "localhost:8080"
-
-		// Check authinfo
-		ainfo, err := rp.AuthInfo(r)
-		if err != nil {
-			return
-		}
-		r.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ainfo.IDToken))
-		r.Header.Set("Forwerded", "localhost:8989")
+	u, err := url.Parse("http://localhost:8080")
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	rvh := &httputil.ReverseProxy{Director: director}
+	list := []router.AdditionalHeader{
+		{"preferred_username", "X-Username"},
+	}
+	rvh := rp.ReverseProxy(u, list)
 
 	// mux
 	r := chi.NewRouter()
@@ -138,15 +133,17 @@ func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}
 	recho := chi.NewRouter()
 	recho.MethodFunc("GET", "/*", func(w http.ResponseWriter, r *http.Request) {
 		// Check Header
-		bearer := r.Header.Get("Authorization")
+		// bearer := r.Header.Get("Authorization")
 		forw := r.Header.Get("Forwerded")
+		uname := r.Header.Get("X-Username")
 		// show
 		// w.Header().Set("Content-Type", "text/html")
 		// diff := ainfo.ExpireAt.Sub(time.Now())
 		// fmt.Fprintf(w, "<a href=\"/login\">Login</a>")
 		// fmt.Fprintf(w, "<p>Wellcome to [%s]. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", r.URL.Path, ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
-		w.Write([]byte(bearer))
-		w.Write([]byte(forw))
+		// w.Write([]byte(bearer+\r\n))
+		w.Write([]byte(forw + "\r\n"))
+		w.Write([]byte(uname))
 	})
 	s2addr := ":8080"
 	srv2 := &http.Server{Addr: s2addr, Handler: recho}

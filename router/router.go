@@ -1,10 +1,15 @@
 package router
 
 import (
+	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"github.com/uzuna/go-authproxy/errorpage"
 	"github.com/uzuna/go-authproxy/internal/session"
@@ -16,6 +21,7 @@ type RouteProvider interface {
 	AuthRedirect() func(next http.Handler) http.Handler
 	Authenticate() http.Handler
 	Login(ex ExpectRedirectProp) http.Handler
+	ReverseProxy(target *url.URL, list []AdditionalHeader) http.Handler
 
 	AuthInfo(r *http.Request) (*session.AuthInfo, error)
 }
@@ -183,4 +189,61 @@ func (rt *router) AuthInfo(r *http.Request) (*session.AuthInfo, error) {
 		return nil, errors.Errorf("Fail get auth info from session")
 	}
 	return ainfo, nil
+}
+
+type AdditionalHeader struct {
+	ClaimKey, HeaderName string
+}
+
+func (rt *router) ReverseProxy(target *url.URL, list []AdditionalHeader) http.Handler {
+	// copy from /src/net/http/httputil/reverseproxy
+	targetQuery := target.RawQuery
+	director := func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
+		if targetQuery == "" || req.URL.RawQuery == "" {
+			req.URL.RawQuery = targetQuery + req.URL.RawQuery
+		} else {
+			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
+		}
+		if _, ok := req.Header["User-Agent"]; !ok {
+			req.Header.Set("User-Agent", "")
+		}
+
+		// Add Authorization header
+		ainfo, err := rt.AuthInfo(req)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ainfo.IDToken))
+
+		// additional mapping
+		if len(list) > 0 {
+			var claims jwt.MapClaims
+			p := &jwt.Parser{}
+			p.ParseUnverified(ainfo.IDToken, &claims)
+			for _, v := range list {
+				if x, ok := claims[v.ClaimKey]; ok {
+					switch vv := x.(type) {
+					case string:
+						req.Header.Set(v.HeaderName, vv)
+					}
+				}
+			}
+		}
+	}
+	return &httputil.ReverseProxy{Director: director}
+}
+
+func singleJoiningSlash(a, b string) string {
+	aslash := strings.HasSuffix(a, "/")
+	bslash := strings.HasPrefix(b, "/")
+	switch {
+	case aslash && bslash:
+		return a + b[1:]
+	case !aslash && !bslash:
+		return a + "/" + b
+	}
+	return a + b
 }
