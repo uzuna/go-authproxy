@@ -77,7 +77,7 @@ func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}
 	// mux
 	r := chi.NewRouter()
 
-	// Setr defaul t not found page
+	// Set default not found page
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		s := fmt.Sprintf("Not found path: [%s]", r.URL.Path)
 		ep.Error(w, r, s, 404)
@@ -91,10 +91,10 @@ func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}
 	// and authinfo to set to session store
 	r.Method("POST", "/cb", rp.Authenticate())
 
-	reRef := regexp.MustCompile(`^https?\:\/{2}localhost:8989\/.+$`)
-	erp := router.ReferrerMatch(reRef)
 	// Route of Login Redirect
 	// This generates and to redierct to AuthURL for OIDC login
+	reRef := regexp.MustCompile(`^https?\:\/{2}localhost:8989\/.+$`)
+	erp := router.ReferrerMatch(reRef)
 	r.Method("GET", "/login", rp.Login(erp))
 
 	// Route of Top page

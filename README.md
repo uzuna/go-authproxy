@@ -27,3 +27,9 @@ response_type: id_token
 issuers: 
   - https://login.microsoftonline.com/***/v2.0
 ```
+
+```ini
+APX_PORT=8989
+APX_FORWARDTO=http://localhost:8080
+APX_ACCEPTORIGINPTN="^https?\:\/{2}localhost"
+```
