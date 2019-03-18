@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"regexp"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/uzuna/go-authproxy/errorpage"
 	"github.com/uzuna/go-authproxy/internal/session"
+	"github.com/uzuna/go-authproxy/router"
 
 	"github.com/go-chi/chi"
 	"github.com/quasoft/memstore"
@@ -47,7 +47,12 @@ func main() {
 	sessionName := "demo"
 	aikey := &contextKey{"authinfo"}
 	as := session.NewAuthStore(store, sessionName, aikey)
-	server(a, as, aikey)
+
+	// CustomErrorPages
+	ep, err := errorpage.NewErrorPages()
+	panicError(err)
+	rp := router.New(a, as, ep, aikey)
+	server(rp, ep, aikey)
 }
 
 func panicError(err error) {
@@ -56,13 +61,8 @@ func panicError(err error) {
 	}
 }
 
-func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error {
+func server(rp router.RouteProvider, ep *errorpage.ErrorPages, aikey interface{}) error {
 
-	// CustomErrorPages
-	ep, err := errorpage.NewErrorPages()
-	if err != nil {
-		return errors.WithStack(err)
-	}
 	// 	rh := authproxy.RerouteRedirect(ep, "/")
 	// 	rr := authproxy.Reroute(ep)
 	// 	authMw := authproxy.Authorize(set, oc, ns)
@@ -78,98 +78,25 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 	})
 
 	// mount session information
-	r.Use(as.Handler())
+	r.Use(rp.LoadSession())
 
 	// Route of Authenticate CallBack
 	// Parse Authenticate response
 	// and authinfo to set to session store
-	r.MethodFunc("POST", "/cb", func(w http.ResponseWriter, r *http.Request) {
-		ares, err := a.Authenticate(r)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 401)
-			return
-		}
+	r.Method("POST", "/cb", rp.Authenticate())
 
-		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
-		if !ok {
-			ep.Error(w, r, "Fail get session data", 503)
-			return
-		}
-
-		if ares.State != ainfo.AuthenticationState {
-			err = errors.Errorf("Unmatch state")
-			ep.Error(w, r, err.Error(), 401)
-			return
-		}
-		redirectPath := "/"
-		if len(ainfo.LoginReferer) > 0 {
-			redirectPath = ainfo.LoginReferer
-		}
-		ainfo.AuthenticationState = ""
-		ainfo.IDToken = ares.IDToken
-		ainfo.ExpireAt = ares.Claims.Expire()
-		ainfo.LoggedIn = true
-
-		err = as.Save(w, r, ainfo)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
-			return
-		}
-
-		// Return to Top
-		w.Header().Set("Location", redirectPath)
-		w.WriteHeader(http.StatusSeeOther)
-	})
-
+	reRef := regexp.MustCompile(`^https?\:\/{2}localhost:8989\/.+$`)
+	erp := router.ReferrerMatch(reRef)
 	// Route of Login Redirect
 	// This generates and to redierct to AuthURL for OIDC login
-	r.MethodFunc("GET", "/login", func(w http.ResponseWriter, r *http.Request) {
-		// Check authinfo
-		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
-		if !ok {
-			ep.Error(w, r, "Fail get session data", 503)
-			return
-		}
-		// I lggedin and not expired return home
-		if ainfo.LoggedIn && time.Since(ainfo.ExpireAt) < time.Duration(0) {
-			w.Header().Set("Location", "/")
-			w.WriteHeader(http.StatusSeeOther)
-			return
-		}
-
-		// generate URL
-		state := oidc.GenState()
-		ainfo.AuthenticationState = state
-
-		// @TODO 自身と同じOrigin場合のみRedirect先を保持する
-		referrer := r.Header.Get("Referer")
-		if strings.HasPrefix(referrer, "http://localhost") ||
-			strings.HasPrefix(referrer, "https://localhost") {
-			ainfo.LoginReferer = referrer
-		}
-		authpath, err := a.AuthURL(state,
-			oidc.SetURLParam("response_mode", "form_post"),
-		)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
-			return
-		}
-		err = as.Save(w, r, ainfo)
-		if err != nil {
-			ep.Error(w, r, err.Error(), 503)
-			return
-		}
-
-		w.Header().Set("Location", authpath)
-		w.WriteHeader(http.StatusFound)
-	})
+	r.Method("GET", "/login", rp.Login(erp))
 
 	// Route of Top page
 	r.MethodFunc("GET", "/", func(w http.ResponseWriter, r *http.Request) {
 		// Check authinfo
-		ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
-		if !ok {
-			ep.Error(w, r, "Fail get session data", 503)
+		ainfo, err := rp.AuthInfo(r)
+		if err != nil {
+			ep.Error(w, r, err.Error(), 503)
 			return
 		}
 
@@ -180,32 +107,13 @@ func server(a oidc.Authenticator, as session.AuthStore, aiKey interface{}) error
 		fmt.Fprintf(w, "<p>Accept. LoggedIn: %v, Expires: %s ,ExpireAt: %s</p>", ainfo.LoggedIn, diff.String(), ainfo.ExpireAt.String())
 	})
 
-	loginRedirect := func() func(next http.Handler) http.Handler {
-		return func(next http.Handler) http.Handler {
-			fn := func(w http.ResponseWriter, r *http.Request) {
-				ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
-				if !ok {
-					ep.Error(w, r, "Fail get session data", 503)
-					return
-				}
-				// Show Login page when not loggedin
-				// 301だとRefererが取れないため401ページを中継する
-				if !ainfo.LoggedIn || time.Since(ainfo.ExpireAt) > time.Second {
-					ep.Error(w, r, "Please Login.", 401)
-					return
-				}
-				next.ServeHTTP(w, r)
-			}
-			return http.HandlerFunc(fn)
-		}
-	}
 	r.Route("/withauth", func(r chi.Router) {
-		r.Use(loginRedirect())
+		r.Use(rp.AuthRedirect())
 		r.MethodFunc("GET", "/*", func(w http.ResponseWriter, r *http.Request) {
 			// Check authinfo
-			ainfo, ok := r.Context().Value(aiKey).(*session.AuthInfo)
-			if !ok {
-				ep.Error(w, r, "Fail get session data", 503)
+			ainfo, err := rp.AuthInfo(r)
+			if err != nil {
+				ep.Error(w, r, err.Error(), 503)
 				return
 			}
 

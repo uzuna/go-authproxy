@@ -87,6 +87,14 @@ func (a *authenticator) Authenticate(r *http.Request) (*AuthResponse, error) {
 		return nil, errors.Errorf("Invalid nonce")
 	}
 
+	if claims.Audience != a.config.ClientID {
+		return nil, errors.Errorf("Unacceptable Audience [%s]", claims.Audience)
+	}
+
+	if checkIssers(a.config.Issuers, claims.Issuer) {
+		return nil, errors.Errorf("Unacceptable Issuer [%s]", claims.Issuer)
+	}
+
 	ares.Claims = claims
 
 	// @TODO switch grant flow
@@ -96,4 +104,16 @@ func (a *authenticator) Authenticate(r *http.Request) (*AuthResponse, error) {
 	// }
 
 	return ares, nil
+}
+
+func checkIssers(list []string, iss string) bool {
+	if len(list) < 1 {
+		return true
+	}
+	for _, v := range list {
+		if v == iss {
+			return true
+		}
+	}
+	return false
 }

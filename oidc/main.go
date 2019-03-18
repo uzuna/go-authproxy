@@ -41,6 +41,7 @@ type Config struct {
 	JWKURL       string   `json:"jwk_url" yaml:"jwk_url"`
 	Scopes       []string `json:"scopes" yaml:"scopes"`
 	ResponseType string   `json:"response_type" yaml:"response_type"`
+	Issuers      []string `json:"issuers" yaml:"issuers"`
 }
 
 type Endpoint struct {
